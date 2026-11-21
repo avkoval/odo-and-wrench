@@ -1,0 +1,85 @@
+title: |md
+  # auto-maintenance: one car, left to right
+| {near: top-center}
+
+model: {
+  label: ""
+  grid-rows: 5
+  grid-columns: 9
+  grid-gap: 30
+  style.fill: "#F7F7F7"
+
+  l0: "Owner\n(screens)" {shape: text; style.font-size: 20}
+  s_garage: "Add car\nphoto of VIN" {style.fill: "#FFFFFF"; shape: page}
+  s_sched: "Schedule\npick template, edit" {style.fill: "#FFFFFF"; shape: page}
+  s_cap: "Capture\nphoto plate + odometer" {style.fill: "#FFFFFF"; shape: page}
+  s_conf: "Capture\nconfirm 129 400 km" {style.fill: "#FFFFFF"; shape: page}
+  s_log: "Log entry\noil + filter, 2850 UAH" {style.fill: "#FFFFFF"; shape: page}
+  s_car: "Car\nwhat is due" {style.fill: "#FFFFFF"; shape: page}
+  s_diary: "Diary\nhistory" {style.fill: "#FFFFFF"; shape: page}
+  s_notif: "Notification\n'oil in 600 km'" {style.fill: "#FFFFFF"; shape: page}
+
+  l1: "External" {shape: text; style.font-size: 20}
+  x_vin: "VIN decoder\nJF1…8G… → Subaru 2008" {style.fill: "#FFF59D"}
+  x_tpl: "Template catalogue\n(app data)" {style.fill: "#FFF59D"}
+  x_ocr: "Camera +\ntext recognition\n(on device)" {style.fill: "#FFF59D"}
+  g3: "" {style.opacity: 0}
+  g4: "" {style.opacity: 0}
+  g5: "" {style.opacity: 0}
+  g6: "" {style.opacity: 0}
+  x_tick: "Scheduled job\nat notify_at (settings)" {style.fill: "#FFF59D"}
+
+  l2: "Commands /\nRead models" {shape: text; style.font-size: 20}
+  c_reg: "car/register" {style.fill: "#A7C7E7"}
+  c_def: "schedule/apply-template\ndefine / change / retire" {style.fill: "#A7C7E7"}
+  rm_plate: "car-by-plate" {style.fill: "#C5E8A0"}
+  c_odo: "odometer/record\n(km + recognized_km)" {style.fill: "#A7C7E7"}
+  c_log: "maintenance/log" {style.fill: "#A7C7E7"}
+  rm_due: "due-list\nmileage" {style.fill: "#C5E8A0"}
+  rm_diary: "diary" {style.fill: "#C5E8A0"}
+  rm_rem: "reminders-to-send\n-> reminder/send" {style.fill: "#C5E8A0"}
+
+  l3: "car stream\n(events)" {shape: text; style.font-size: 20}
+  e_reg: "car/registered\nVIN, plate, engine" {style.fill: "#F5A65B"}
+  e_def: "schedule/item-defined" {style.fill: "#F5A65B"}
+  g7: "" {style.opacity: 0}
+  e_odo: "odometer/recorded\nO-0001 129 400" {style.fill: "#F5A65B"}
+  e_log: "maintenance/performed\nM-0002" {style.fill: "#F5A65B"}
+  g8: "" {style.opacity: 0}
+  g9: "" {style.opacity: 0}
+  e_rem: "reminder/sent\nengine-oil soon" {style.fill: "#F5A65B"}
+
+  l4: "corrections" {shape: text; style.font-size: 20}
+  g10: "" {style.opacity: 0}
+  g11: "" {style.opacity: 0}
+  g12: "" {style.opacity: 0}
+  e_corr: "odometer/corrected\n(reason)" {style.fill: "#F5A65B"}
+  e_void: "maintenance/voided\n(reason)" {style.fill: "#F5A65B"}
+  g13: "" {style.opacity: 0}
+  g14: "" {style.opacity: 0}
+  g15: "" {style.opacity: 0}
+}
+
+model.s_garage -> model.x_vin
+model.x_vin -> model.c_reg: decoded
+model.c_reg -> model.e_reg
+model.x_tpl -> model.s_sched: suggestions
+model.s_sched -> model.c_def
+model.c_def -> model.e_def
+model.e_reg -> model.rm_plate
+model.s_cap -> model.x_ocr
+model.x_ocr -> model.rm_plate: plate text
+model.x_ocr -> model.s_conf: km guess
+model.rm_plate -> model.s_conf: car
+model.s_conf -> model.c_odo
+model.c_odo -> model.e_odo
+model.s_log -> model.c_log
+model.c_log -> model.e_log
+model.e_odo -> model.rm_due
+model.e_log -> model.rm_due
+model.e_log -> model.rm_diary
+model.rm_due -> model.s_car
+model.rm_diary -> model.s_diary
+model.x_tick -> model.rm_rem
+model.rm_rem -> model.e_rem
+model.e_rem -> model.s_notif

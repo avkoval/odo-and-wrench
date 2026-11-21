@@ -1,0 +1,676 @@
+# Event model of auto-maintenance — an Android app (ClojureDart + Flutter) that keeps a maintenance diary for any number
+# of cars (first owner: a Ford Transit 2011 and a Subaru Forester 2008), identifies a car by its VIN, reads the
+# odometer from a photo and reminds what is due next. Language-neutral: any adapter can check code against it. Source
+# of truth for WHAT the app does; src/ is HOW. Review: model/review-2026-11-21-first-cut.org
+#
+# Format (shared by all projects, see ~/.claude/skills/event-model/SKILL.md):
+#   slice types: state-change | state-view | automation | translation
+#   events / commands are flat maps: {type: <context>/<name>, <field>: <value>, ...}
+#     event types are past tense (odometer/recorded), command types imperative (odometer/record)
+#   gwt: {name, given: [events], when: command, then: [events] | then_error: <category>}
+#   gt:  {name, given: [events], then: {subset of the read model}}
+#
+# Conventions of this model:
+#   - One stream per car (D1). Every event carries `car`; schedule items and diary entries live in the car's stream.
+#     App-wide preferences (language, reminder settings) live in one `settings` stream; their events carry no `car`.
+#   - No server, so slices have no `route`; `screen` names the app screen.
+#   - Distances are whole kilometres, dates are ISO strings ("2026-11-21"), money is a decimal string plus currency.
+#   - IDs are ours, assigned once, never reused: cars by slug (transit, forester), diary entries M-0001, odometer
+#     readings O-0001, schedule items by slug (engine-oil, timing-belt).
+#   - Corrections are new events (odometer/corrected, maintenance/voided); nothing is edited in place.
+
+model: auto-maintenance
+glossary:
+  car: one vehicle the owner maintains; one event stream per car
+  schedule item: a recurring maintenance job of one car (engine oil, cabin filter) with an interval in km and/or months;
+    whichever comes first makes it due
+  odometer reading: the mileage shown on the instrument cluster at a moment, confirmed by the owner; usually from a photo
+  diary entry: one visit or job done on a date at a mileage, covering one or more schedule items and/or free-text work
+  due status: ok | soon (inside the soon window) | overdue (a limit reached or passed) | unknown (never done, no
+    history) — computed, never stored
+  soon window: how early an item counts as "soon" — by default 1000 km or 30 days before it is due; set in the
+    reminder settings, and per schedule item where an item needs more notice (D5)
+  reminder: a phone notification sent once per item and status level, at the time of day set in the reminder settings
+  VIN: the 17-character vehicle identification number; decoded into maker (always) and model, year, engine (where the
+    VIN carries them) (D10)
+  schedule template: a ready list of schedule items for one kind of car (make, model, years, engine), shipped with the
+    app as data; applying it defines the items in one step (D8); an add-on template (LPG system) adds the items of
+    extra equipment to any car that has it
+  cost category: what money on a diary entry was spent for — service | repair | tyres | other (D12)
+
+slices:
+
+  # ---------------------------------------------------------------- garage
+  - id: register-car
+    type: translation
+    screen: add-car
+    # Adapter: photo of the VIN (the plate under the windscreen, the door pillar, or the registration certificate,
+    # which also shows the number plate) -> text recognition -> VIN decoder (D10). The decoder fills what it can; the
+    # owner confirms or completes make, model, year, engine and fuels (an LPG
+    # system is aftermarket and never in the VIN, so the owner adds `lpg`, D13). `decoded` keeps what the decoder said, the
+    # top-level fields are the confirmed values (same pattern as recognized_km in D2).
+    command: car/register
+    events: [car/registered]
+    gwt:
+      - name: a VIN decoded completely (Japanese VIN, model year in position 10); the owner adds LPG
+        given: []
+        when: {type: car/register, car: forester, vin: "JF1SH5LS58G000000", name: "Subaru Forester",
+               make: Subaru, model: Forester, year: 2008, engine: "EJ20 2.0 petrol", fuels: [petrol, lpg],
+               plate: "AA1234BB", photo: "photos/forester/vin.jpg",
+               decoded: {make: Subaru, model: Forester, year: 2008}}
+        then: [{type: car/registered, car: forester, vin: "JF1SH5LS58G000000", name: "Subaru Forester",
+                make: Subaru, model: Forester, year: 2008, engine: "EJ20 2.0 petrol", fuels: [petrol, lpg],
+                plate: "AA1234BB", photo: "photos/forester/vin.jpg",
+                decoded: {make: Subaru, model: Forester, year: 2008}}]
+      - name: a European VIN gives only the maker; the owner completes the rest; the plate is normalised
+        given: []
+        when: {type: car/register, car: transit, vin: "WF0XXXTTGXBA12345", name: "Ford Transit", make: Ford,
+               model: Transit, year: 2011, engine: "2.2 TDCi", fuels: [diesel], plate: "ка 5678 ві",
+               decoded: {make: Ford}}
+        then: [{type: car/registered, car: transit, vin: "WF0XXXTTGXBA12345", name: "Ford Transit", make: Ford,
+                model: Transit, year: 2011, engine: "2.2 TDCi", fuels: [diesel], plate: "KA5678BI",
+                decoded: {make: Ford}}]
+      - name: a VIN that is not 17 characters of A-Z/0-9 without I, O, Q
+        given: []
+        when: {type: car/register, car: transit, vin: "WF0XXXTTGXBA1234O", name: "Ford Transit", make: Ford,
+               model: Transit, year: 2011, fuels: [diesel], plate: "KA5678BI"}
+        then_error: invalid
+      - name: the same VIN twice
+        given: [{type: car/registered, car: forester, vin: "JF1SH5LS58G000000", name: x, plate: "AA1234BB"}]
+        when: {type: car/register, car: forester2, vin: "JF1SH5LS58G000000", name: y, make: Subaru,
+               model: Forester, year: 2008, fuels: [petrol], plate: "AA0000AA"}
+        then_error: conflict
+      - name: a plate already used by another car
+        given: [{type: car/registered, car: forester, vin: "JF1SH5LS58G000000", name: x, plate: "AA1234BB"}]
+        when: {type: car/register, car: transit, vin: "WF0XXXTTGXBA12345", name: "Ford Transit", make: Ford,
+               model: Transit, year: 2011, fuels: [diesel], plate: "AA 1234 BB"}
+        then_error: conflict
+      - name: a blank name
+        given: []
+        when: {type: car/register, car: transit, vin: "WF0XXXTTGXBA12345", name: "  ", make: Ford,
+               model: Transit, year: 2011, fuels: [diesel], plate: "KA5678BI"}
+        then_error: invalid
+
+  - id: garage
+    type: state-view
+    screen: garage
+    read_model: garage
+    events: [car/registered, odometer/recorded, odometer/corrected, maintenance/performed, maintenance/voided,
+             schedule/item-defined, schedule/item-changed, schedule/item-retired]
+    gt:
+      - name: each car shows its last mileage and its most urgent item
+        given:
+          - {type: car/registered, car: forester, name: "Subaru Forester", plate: "AA1234BB"}
+          - {type: schedule/item-defined, car: forester, item: engine-oil, title: "Engine oil + filter",
+             every_km: 10000, every_months: 12}
+          - {type: maintenance/performed, car: forester, entry: M-0001, at: "2026-01-10", km: 120000,
+             items: [engine-oil]}
+          - {type: odometer/recorded, car: forester, reading: O-0001, at: "2026-11-01", km: 129400, source: photo}
+        then: {cars: [{car: forester, name: "Subaru Forester", km: 129400, km_at: "2026-11-01",
+                       most_urgent: {item: engine-oil, status: soon, remaining_km: 600}}]}
+
+  - id: car-by-plate
+    type: state-view
+    screen: capture
+    # the capture screen photographs the plate (or the owner taps the car); the recognised text is looked up here.
+    # Picking the car is not a fact, so it is not an event (D4).
+    read_model: car-by-plate
+    events: [car/registered]
+    gt:
+      - name: normalised plate finds the car
+        given:
+          - {type: car/registered, car: forester, plate: "AA1234BB"}
+          - {type: car/registered, car: transit, plate: "KA5678BI"}
+        then: {"AA1234BB": forester, "KA5678BI": transit}
+
+  # ---------------------------------------------------------------- maintenance schedule
+  - id: define-schedule-item
+    type: state-change
+    screen: schedule
+    command: schedule/define-item
+    events: [schedule/item-defined]
+    gwt:
+      - name: an item with both intervals
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
+        when: {type: schedule/define-item, car: forester, item: engine-oil, title: "Engine oil + filter",
+               every_km: 10000, every_months: 12}
+        then: [{type: schedule/item-defined, car: forester, item: engine-oil, title: "Engine oil + filter",
+                every_km: 10000, every_months: 12}]
+      - name: an item with a time interval only
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
+        when: {type: schedule/define-item, car: forester, item: brake-fluid, title: "Brake fluid", every_months: 24}
+        then: [{type: schedule/item-defined, car: forester, item: brake-fluid, title: "Brake fluid",
+                every_months: 24}]
+      - name: an item that needs more notice than the default soon window
+        given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
+        when: {type: schedule/define-item, car: transit, item: timing-belt, title: "Timing belt kit",
+               every_km: 160000, every_months: 120, soon_km: 5000, soon_days: 60}
+        then: [{type: schedule/item-defined, car: transit, item: timing-belt, title: "Timing belt kit",
+                every_km: 160000, every_months: 120, soon_km: 5000, soon_days: 60}]
+      - name: no interval at all
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
+        when: {type: schedule/define-item, car: forester, item: wipers, title: "Wiper blades"}
+        then_error: invalid
+      - name: a zero or negative interval
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
+        when: {type: schedule/define-item, car: forester, item: engine-oil, title: x, every_km: 0}
+        then_error: invalid
+      - name: the same item twice for one car
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"},
+                {type: schedule/item-defined, car: forester, item: engine-oil, title: x, every_km: 10000}]
+        when: {type: schedule/define-item, car: forester, item: engine-oil, title: y, every_km: 7500}
+        then_error: conflict
+      - name: unknown car
+        given: []
+        when: {type: schedule/define-item, car: lada, item: engine-oil, title: x, every_km: 10000}
+        then_error: not-found
+
+  - id: change-schedule-item
+    type: state-change
+    screen: schedule
+    command: schedule/change-item
+    events: [schedule/item-changed]
+    gwt:
+      - name: oil interval shortened for hard use
+        given: [{type: schedule/item-defined, car: transit, item: engine-oil, title: "Engine oil + filter",
+                 every_km: 15000, every_months: 12}]
+        when: {type: schedule/change-item, car: transit, item: engine-oil, every_km: 10000, every_months: 12,
+               reason: "city driving, short trips"}
+        then: [{type: schedule/item-changed, car: transit, item: engine-oil, every_km: 10000, every_months: 12,
+                reason: "city driving, short trips"}]
+      - name: same intervals produce no event
+        given: [{type: schedule/item-defined, car: transit, item: engine-oil, title: x, every_km: 15000,
+                 every_months: 12}]
+        when: {type: schedule/change-item, car: transit, item: engine-oil, every_km: 15000, every_months: 12}
+        then: []
+      - name: unknown item
+        given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
+        when: {type: schedule/change-item, car: transit, item: timing-belt, every_km: 60000}
+        then_error: not-found
+
+  - id: retire-schedule-item
+    type: state-change
+    screen: schedule
+    command: schedule/retire-item
+    events: [schedule/item-retired]
+    gwt:
+      - name: an item no longer tracked; its history stays in the diary
+        given: [{type: schedule/item-defined, car: transit, item: dpf-cleaning, title: "DPF cleaning",
+                 every_km: 80000}]
+        when: {type: schedule/retire-item, car: transit, item: dpf-cleaning, reason: "DPF removed"}
+        then: [{type: schedule/item-retired, car: transit, item: dpf-cleaning, reason: "DPF removed"}]
+      - name: retiring twice
+        given: [{type: schedule/item-defined, car: transit, item: dpf-cleaning, title: x, every_km: 80000},
+                {type: schedule/item-retired, car: transit, item: dpf-cleaning, reason: x}]
+        when: {type: schedule/retire-item, car: transit, item: dpf-cleaning, reason: y}
+        then_error: not-found
+
+  - id: template-suggestions
+    type: state-view
+    screen: schedule
+    # Matches the car's confirmed make/model/year/engine against the template catalogue (data shipped with the app,
+    # not events). Best match first; the owner can also pick any template or start empty.
+    read_model: template-suggestions
+    events: [car/registered]
+    gt:
+      - name: the Forester gets the SH-generation petrol template
+        given:
+          - {type: car/registered, car: forester, vin: "JF1SH5LS58G000000", make: Subaru, model: Forester,
+             year: 2008, engine: "EJ20 2.0 petrol", fuels: [petrol]}
+        then: {car: forester, suggestions: [{template: subaru-forester-sh-petrol, version: 1,
+                                             title: "Subaru Forester SH (2008–2013), petrol"}]}
+      - name: a car with LPG also gets the LPG add-on template
+        given:
+          - {type: car/registered, car: forester, vin: "JF1SH5LS58G000000", make: Subaru, model: Forester,
+             year: 2008, engine: "EJ20 2.0 petrol", fuels: [petrol, lpg]}
+        then: {car: forester, suggestions: [{template: subaru-forester-sh-petrol, version: 1},
+                                            {template: lpg-system, version: 1,
+                                             title: "LPG system (gas filters, reducer service)"}]}
+      - name: no template for this car -> empty list, the owner defines items by hand
+        given:
+          - {type: car/registered, car: lada, vin: "XTA210990Y0000000", make: Lada, model: "2109", year: 2000,
+             fuels: [petrol]}
+        then: {car: lada, suggestions: []}
+
+  - id: apply-schedule-template
+    type: state-change
+    screen: schedule
+    # The command carries the template's items as the owner saw (and possibly edited) them, so the decision does not
+    # depend on the catalogue file. Each defined item remembers the template it came from.
+    command: schedule/apply-template
+    events: [schedule/item-defined]
+    gwt:
+      - name: the template defines every item in one step
+        given: [{type: car/registered, car: forester, vin: "JF1SH5LS58G000000", name: x, plate: "AA1234BB"}]
+        when: {type: schedule/apply-template, car: forester, template: subaru-forester-sh-petrol, version: 1,
+               items: [{item: engine-oil, title: "Engine oil + filter", every_km: 10000, every_months: 12},
+                       {item: timing-belt, title: "Timing belt + idler", every_km: 105000, every_months: 84,
+                        soon_km: 3000}]}
+        then: [{type: schedule/item-defined, car: forester, item: engine-oil, title: "Engine oil + filter",
+                every_km: 10000, every_months: 12, template: subaru-forester-sh-petrol, version: 1},
+               {type: schedule/item-defined, car: forester, item: timing-belt, title: "Timing belt + idler",
+                every_km: 105000, every_months: 84, soon_km: 3000, template: subaru-forester-sh-petrol,
+                version: 1}]
+      - name: the LPG add-on brings the gas filters every 8000 km
+        given: [{type: car/registered, car: forester, vin: "JF1SH5LS58G000000", name: x, plate: "AA1234BB",
+                 fuels: [petrol, lpg]}]
+        when: {type: schedule/apply-template, car: forester, template: lpg-system, version: 1,
+               items: [{item: lpg-filters, title: "LPG filters (liquid + vapour phase)", every_km: 8000},
+                       {item: lpg-reducer, title: "LPG reducer service", every_km: 30000, every_months: 24}]}
+        then: [{type: schedule/item-defined, car: forester, item: lpg-filters,
+                title: "LPG filters (liquid + vapour phase)", every_km: 8000, template: lpg-system, version: 1},
+               {type: schedule/item-defined, car: forester, item: lpg-reducer, title: "LPG reducer service",
+                every_km: 30000, every_months: 24, template: lpg-system, version: 1}]
+      - name: items the car already has are kept as they are
+        given: [{type: car/registered, car: forester, vin: "JF1SH5LS58G000000", name: x, plate: "AA1234BB"},
+                {type: schedule/item-defined, car: forester, item: engine-oil, title: "Oil", every_km: 7500}]
+        when: {type: schedule/apply-template, car: forester, template: subaru-forester-sh-petrol, version: 1,
+               items: [{item: engine-oil, title: "Engine oil + filter", every_km: 10000},
+                       {item: brake-fluid, title: "Brake fluid", every_months: 24}]}
+        then: [{type: schedule/item-defined, car: forester, item: brake-fluid, title: "Brake fluid",
+                every_months: 24, template: subaru-forester-sh-petrol, version: 1}]
+      - name: an item without an interval makes the whole template invalid
+        given: [{type: car/registered, car: forester, vin: "JF1SH5LS58G000000", name: x, plate: "AA1234BB"}]
+        when: {type: schedule/apply-template, car: forester, template: subaru-forester-sh-petrol, version: 1,
+               items: [{item: wipers, title: "Wiper blades"}]}
+        then_error: invalid
+
+  # ---------------------------------------------------------------- odometer
+  - id: record-odometer
+    type: translation
+    screen: capture
+    # Adapter: camera photo -> on-device text recognition (D3) -> the screen pre-fills the number; the owner confirms or
+    # fixes it. The fact is the CONFIRMED km; what the recogniser read is kept to measure its accuracy (D2).
+    # Typed-in readings use the same command with source: manual and no photo.
+    command: odometer/record
+    events: [odometer/recorded]
+    gwt:
+      - name: recognised number confirmed as is
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
+        when: {type: odometer/record, car: forester, reading: O-0001, at: "2026-11-01", km: 129400, source: photo,
+               photo: "photos/forester/2026-11-01-odometer.jpg", recognized_km: 129400, confidence: 0.94}
+        then: [{type: odometer/recorded, car: forester, reading: O-0001, at: "2026-11-01", km: 129400, source: photo,
+                photo: "photos/forester/2026-11-01-odometer.jpg", recognized_km: 129400, confidence: 0.94}]
+      - name: owner fixes a misread digit; both numbers are kept
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
+        when: {type: odometer/record, car: forester, reading: O-0002, at: "2026-11-15", km: 130180, source: photo,
+               photo: "photos/forester/2026-11-15-odometer.jpg", recognized_km: 130780, confidence: 0.61}
+        then: [{type: odometer/recorded, car: forester, reading: O-0002, at: "2026-11-15", km: 130180, source: photo,
+                photo: "photos/forester/2026-11-15-odometer.jpg", recognized_km: 130780, confidence: 0.61}]
+      - name: typed in without a photo
+        given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
+        when: {type: odometer/record, car: transit, reading: O-0003, at: "2026-11-20", km: 214350, source: manual}
+        then: [{type: odometer/recorded, car: transit, reading: O-0003, at: "2026-11-20", km: 214350,
+                source: manual}]
+      - name: the odometer does not go back (a correction is a separate command)
+        given: [{type: odometer/recorded, car: forester, reading: O-0001, at: "2026-11-01", km: 129400,
+                 source: photo}]
+        when: {type: odometer/record, car: forester, reading: O-0002, at: "2026-11-15", km: 120940, source: photo,
+               recognized_km: 120940, confidence: 0.55}
+        then_error: conflict
+      - name: zero or negative km
+        given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
+        when: {type: odometer/record, car: transit, reading: O-0003, at: "2026-11-20", km: 0, source: manual}
+        then_error: invalid
+      - name: unknown car
+        given: []
+        when: {type: odometer/record, car: lada, reading: O-0001, at: "2026-11-20", km: 1000, source: manual}
+        then_error: not-found
+
+  - id: correct-odometer
+    type: state-change
+    screen: mileage
+    command: odometer/correct
+    events: [odometer/corrected]
+    gwt:
+      - name: a wrong reading is corrected with a reason
+        given: [{type: odometer/recorded, car: forester, reading: O-0002, at: "2026-11-15", km: 130780,
+                 source: photo, recognized_km: 130780}]
+        when: {type: odometer/correct, car: forester, reading: O-0002, km: 130180, reason: "misread 1 as 7"}
+        then: [{type: odometer/corrected, car: forester, reading: O-0002, km: 130180, reason: "misread 1 as 7"}]
+      - name: a correction needs a reason
+        given: [{type: odometer/recorded, car: forester, reading: O-0002, at: "2026-11-15", km: 130780,
+                 source: photo}]
+        when: {type: odometer/correct, car: forester, reading: O-0002, km: 130180, reason: ""}
+        then_error: invalid
+      - name: unknown reading
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
+        when: {type: odometer/correct, car: forester, reading: O-0099, km: 1, reason: x}
+        then_error: not-found
+
+  - id: mileage
+    type: state-view
+    screen: mileage
+    # current km = the highest km among readings (after corrections) and diary entries; the daily average over the last
+    # 90 days predicts the DATE a km-based item becomes due (used by due-list)
+    read_model: mileage
+    events: [odometer/recorded, odometer/corrected, maintenance/performed, maintenance/voided]
+    gt:
+      - name: current km and daily average
+        given:
+          - {type: odometer/recorded, car: forester, reading: O-0001, at: "2026-10-02", km: 128500, source: photo}
+          - {type: odometer/recorded, car: forester, reading: O-0002, at: "2026-11-01", km: 129400, source: photo}
+        then: {car: forester, km: 129400, km_at: "2026-11-01", km_per_day: 30}
+      - name: a correction replaces the value of its reading
+        given:
+          - {type: odometer/recorded, car: forester, reading: O-0001, at: "2026-11-15", km: 130780, source: photo}
+          - {type: odometer/corrected, car: forester, reading: O-0001, km: 130180, reason: x}
+        then: {car: forester, km: 130180}
+      - name: a diary entry counts as a reading
+        given:
+          - {type: odometer/recorded, car: transit, reading: O-0001, at: "2026-11-01", km: 214000, source: photo}
+          - {type: maintenance/performed, car: transit, entry: M-0002, at: "2026-11-10", km: 214200,
+             items: [engine-oil]}
+        then: {car: transit, km: 214200, km_at: "2026-11-10"}
+
+  # ---------------------------------------------------------------- diary
+  - id: log-maintenance
+    type: state-change
+    screen: log-entry
+    # Usually opened right after a photo reading (date and km pre-filled). Past work can be entered too, for the
+    # history before the app (D6): an entry may have a lower km than the current reading; a new reading may not.
+    # A cost needs a category (D12); an entry without a cost needs none.
+    command: maintenance/log
+    events: [maintenance/performed]
+    gwt:
+      - name: oil change with cost and place
+        given: [{type: schedule/item-defined, car: transit, item: engine-oil, title: x, every_km: 15000},
+                {type: schedule/item-defined, car: transit, item: oil-filter, title: x, every_km: 15000}]
+        when: {type: maintenance/log, car: transit, entry: M-0002, at: "2026-11-10", km: 214200,
+               items: [engine-oil, oil-filter], extra: [], note: "Castrol 5W-30, 6.2 l", cost: "2850.00",
+               currency: UAH, category: service, place: "СТО на Здолбунівській", photos: ["photos/transit/2026-11-10-receipt.jpg"]}
+        then: [{type: maintenance/performed, car: transit, entry: M-0002, at: "2026-11-10", km: 214200,
+                items: [engine-oil, oil-filter], extra: [], note: "Castrol 5W-30, 6.2 l", cost: "2850.00",
+                currency: UAH, category: service, place: "СТО на Здолбунівській", photos: ["photos/transit/2026-11-10-receipt.jpg"]}]
+      - name: unscheduled work as free text
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
+        when: {type: maintenance/log, car: forester, entry: M-0003, at: "2026-11-12", km: 129900, items: [],
+               extra: ["left low-beam bulb H7"]}
+        then: [{type: maintenance/performed, car: forester, entry: M-0003, at: "2026-11-12", km: 129900, items: [],
+                extra: ["left low-beam bulb H7"]}]
+      - name: history from before the app, below the current mileage
+        given: [{type: schedule/item-defined, car: forester, item: timing-belt, title: x, every_km: 105000,
+                 every_months: 84},
+                {type: odometer/recorded, car: forester, reading: O-0001, at: "2026-11-01", km: 129400,
+                 source: photo}]
+        when: {type: maintenance/log, car: forester, entry: M-0001, at: "2022-06-15", km: 98000,
+               items: [timing-belt], extra: [], note: "from the paper service book"}
+        then: [{type: maintenance/performed, car: forester, entry: M-0001, at: "2022-06-15", km: 98000,
+                items: [timing-belt], extra: [], note: "from the paper service book"}]
+      - name: seasonal tyre change as free text with its cost
+        given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
+        when: {type: maintenance/log, car: transit, entry: M-0006, at: "2026-11-05", km: 214000, items: [],
+               extra: ["winter tyres on, balancing"], cost: "1200.00", currency: UAH, category: tyres}
+        then: [{type: maintenance/performed, car: transit, entry: M-0006, at: "2026-11-05", km: 214000, items: [],
+                extra: ["winter tyres on, balancing"], cost: "1200.00", currency: UAH, category: tyres}]
+      - name: a cost without a category, or an unknown category
+        given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
+        when: {type: maintenance/log, car: transit, entry: M-0007, at: "2026-11-05", km: 214000, items: [],
+               extra: [x], cost: "100.00", currency: UAH, category: fuel}
+        then_error: invalid
+      - name: nothing done
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
+        when: {type: maintenance/log, car: forester, entry: M-0004, at: "2026-11-12", km: 129900, items: [],
+               extra: []}
+        then_error: invalid
+      - name: an item that is not in the car's schedule (or is retired)
+        given: [{type: schedule/item-defined, car: transit, item: dpf-cleaning, title: x, every_km: 80000},
+                {type: schedule/item-retired, car: transit, item: dpf-cleaning, reason: x}]
+        when: {type: maintenance/log, car: transit, entry: M-0005, at: "2026-11-12", km: 214300,
+               items: [dpf-cleaning], extra: []}
+        then_error: invalid
+
+  - id: void-maintenance
+    type: state-change
+    screen: diary
+    command: maintenance/void
+    events: [maintenance/voided]
+    gwt:
+      - name: an entry made by mistake is voided with a reason
+        given: [{type: maintenance/performed, car: forester, entry: M-0003, at: "2026-11-12", km: 129900, items: [],
+                 extra: [x]}]
+        when: {type: maintenance/void, car: forester, entry: M-0003, reason: "logged for the wrong car"}
+        then: [{type: maintenance/voided, car: forester, entry: M-0003, reason: "logged for the wrong car"}]
+      - name: voiding twice
+        given: [{type: maintenance/performed, car: forester, entry: M-0003, at: "2026-11-12", km: 129900, items: [],
+                 extra: [x]},
+                {type: maintenance/voided, car: forester, entry: M-0003, reason: x}]
+        when: {type: maintenance/void, car: forester, entry: M-0003, reason: y}
+        then_error: not-found
+
+  - id: diary
+    type: state-view
+    screen: diary
+    read_model: diary
+    events: [maintenance/performed, maintenance/voided, schedule/item-defined]
+    gt:
+      - name: newest first, item titles resolved, voided entries hidden
+        given:
+          - {type: schedule/item-defined, car: transit, item: engine-oil, title: "Engine oil", every_km: 15000}
+          - {type: maintenance/performed, car: transit, entry: M-0001, at: "2026-03-01", km: 205000,
+             items: [engine-oil], extra: []}
+          - {type: maintenance/performed, car: transit, entry: M-0002, at: "2026-11-10", km: 214200,
+             items: [engine-oil], extra: [], cost: "2850.00", currency: UAH}
+          - {type: maintenance/performed, car: transit, entry: M-0003, at: "2026-11-11", km: 214250, items: [],
+             extra: [x]}
+          - {type: maintenance/voided, car: transit, entry: M-0003, reason: x}
+        then: {car: transit, entries: [{entry: M-0002, at: "2026-11-10", km: 214200, titles: ["Engine oil"],
+                                        cost: "2850.00", currency: UAH},
+                                       {entry: M-0001, at: "2026-03-01", km: 205000, titles: ["Engine oil"]}]}
+
+  - id: costs-by-year
+    type: state-view
+    screen: costs
+    # Money spent per car, year and category, from diary entries with a cost; voided entries do not count. Totals are
+    # per currency (no conversion). Fuel is not here: fuel receipts / bank import are a later phase (D12).
+    read_model: costs-by-year
+    events: [maintenance/performed, maintenance/voided]
+    gt:
+      - name: totals per year and category
+        given:
+          - {type: maintenance/performed, car: transit, entry: M-0002, at: "2026-11-10", km: 214200,
+             items: [engine-oil], extra: [], cost: "2850.00", currency: UAH, category: service}
+          - {type: maintenance/performed, car: transit, entry: M-0006, at: "2026-11-05", km: 214000, items: [],
+             extra: [x], cost: "1200.00", currency: UAH, category: tyres}
+          - {type: maintenance/performed, car: transit, entry: M-0008, at: "2026-04-01", km: 209000, items: [],
+             extra: [x], cost: "6400.00", currency: UAH, category: repair}
+          - {type: maintenance/performed, car: transit, entry: M-0009, at: "2026-04-02", km: 209010, items: [],
+             extra: [x], cost: "500.00", currency: UAH, category: repair}
+          - {type: maintenance/voided, car: transit, entry: M-0009, reason: x}
+          - {type: maintenance/performed, car: transit, entry: M-0001, at: "2025-10-01", km: 200000,
+             items: [engine-oil], extra: [], cost: "2500.00", currency: UAH, category: service}
+        then: {car: transit, years: [{year: 2026, currency: UAH, total: "10450.00",
+                                      by_category: {service: "2850.00", repair: "6400.00", tyres: "1200.00"}},
+                                     {year: 2025, currency: UAH, total: "2500.00",
+                                      by_category: {service: "2500.00"}}]}
+
+  # ---------------------------------------------------------------- what is due
+  - id: due-list
+    type: state-view
+    screen: car
+    # per active schedule item: last done (latest non-voided entry with the item), next due by km and by date,
+    # predicted date for the km limit (km_per_day from mileage), and the status by whichever limit comes first.
+    # Evaluated against `today` (a parameter of the view, not an event).
+    read_model: due-list
+    events: [schedule/item-defined, schedule/item-changed, schedule/item-retired, maintenance/performed,
+             maintenance/voided, odometer/recorded, odometer/corrected, settings/reminders-configured]
+    gt:
+      - name: km limit is near -> soon, with a predicted date
+        given:
+          - {type: schedule/item-defined, car: forester, item: engine-oil, title: "Engine oil + filter",
+             every_km: 10000, every_months: 12}
+          - {type: maintenance/performed, car: forester, entry: M-0001, at: "2026-01-10", km: 120000,
+             items: [engine-oil], extra: []}
+          - {type: odometer/recorded, car: forester, reading: O-0001, at: "2026-10-02", km: 128500, source: photo}
+          - {type: odometer/recorded, car: forester, reading: O-0002, at: "2026-11-01", km: 129400, source: photo}
+        then: {today: "2026-11-01", items: [{item: engine-oil, last_km: 120000, last_at: "2026-01-10",
+                                             due_km: 130000, due_at: "2027-01-10", remaining_km: 600,
+                                             predicted_at: "2026-11-21", status: soon}]}
+      - name: date limit passed although km is fine -> overdue
+        given:
+          - {type: schedule/item-defined, car: transit, item: coolant, title: "Coolant", every_km: 100000,
+             every_months: 24}
+          - {type: maintenance/performed, car: transit, entry: M-0001, at: "2024-09-01", km: 180000,
+             items: [coolant], extra: []}
+          - {type: odometer/recorded, car: transit, reading: O-0001, at: "2026-11-20", km: 214350, source: manual}
+        then: {today: "2026-11-20", items: [{item: coolant, due_at: "2026-09-01", due_km: 280000, status: overdue}]}
+      - name: never done -> unknown, asks for the history
+        given:
+          - {type: schedule/item-defined, car: transit, item: timing-belt, title: "Timing belt", every_km: 160000}
+        then: {items: [{item: timing-belt, status: unknown}]}
+      - name: a changed interval moves the due point; a retired item disappears
+        given:
+          - {type: schedule/item-defined, car: transit, item: engine-oil, title: x, every_km: 15000}
+          - {type: schedule/item-defined, car: transit, item: dpf-cleaning, title: x, every_km: 80000}
+          - {type: maintenance/performed, car: transit, entry: M-0002, at: "2026-11-10", km: 214200,
+             items: [engine-oil], extra: []}
+          - {type: schedule/item-changed, car: transit, item: engine-oil, every_km: 10000, reason: x}
+          - {type: schedule/item-retired, car: transit, item: dpf-cleaning, reason: x}
+        then: {items: [{item: engine-oil, due_km: 224200}]}
+      - name: the soon window comes from the item, else from the reminder settings
+        given:
+          - {type: settings/reminders-configured, notify_at: "09:00", soon_km: 1500, soon_days: 30, stale_days: 30,
+             enabled: true}
+          - {type: schedule/item-defined, car: transit, item: engine-oil, title: x, every_km: 10000}
+          - {type: schedule/item-defined, car: transit, item: timing-belt, title: x, every_km: 160000,
+             soon_km: 5000}
+          - {type: maintenance/performed, car: transit, entry: M-0001, at: "2026-06-01", km: 203000,
+             items: [engine-oil], extra: []}
+          - {type: maintenance/performed, car: transit, entry: M-0002, at: "2018-05-01", km: 58000,
+             items: [timing-belt], extra: []}
+          - {type: odometer/recorded, car: transit, reading: O-0001, at: "2026-11-20", km: 214350, source: manual}
+        then: {items: [{item: engine-oil, due_km: 213000, status: overdue},
+                       {item: timing-belt, due_km: 218000, remaining_km: 3650, status: soon}]}
+
+  # ---------------------------------------------------------------- settings
+  - id: choose-language
+    type: state-change
+    screen: settings
+    # English until the owner chooses otherwise (no event = en). Texts live in translation files per language; adding
+    # a language is a new file plus an entry in the supported list, not a model change.
+    command: settings/choose-language
+    events: [settings/language-chosen]
+    gwt:
+      - name: Ukrainian chosen
+        given: []
+        when: {type: settings/choose-language, language: uk}
+        then: [{type: settings/language-chosen, language: uk}]
+      - name: the language already in use produces no event
+        given: [{type: settings/language-chosen, language: uk}]
+        when: {type: settings/choose-language, language: uk}
+        then: []
+      - name: a language without translations
+        given: []
+        when: {type: settings/choose-language, language: de}
+        then_error: invalid
+
+  - id: configure-reminders
+    type: state-change
+    screen: settings
+    # Defaults until configured: 09:00, every day, soon 1000 km / 30 days, odometer photo asked after 30 days, on.
+    command: settings/configure-reminders
+    events: [settings/reminders-configured]
+    gwt:
+      - name: evening reminders on weekdays, more notice
+        given: []
+        when: {type: settings/configure-reminders, notify_at: "19:30", days: [mon, tue, wed, thu, fri],
+               soon_km: 1500, soon_days: 45, stale_days: 21, enabled: true}
+        then: [{type: settings/reminders-configured, notify_at: "19:30", days: [mon, tue, wed, thu, fri],
+                soon_km: 1500, soon_days: 45, stale_days: 21, enabled: true}]
+      - name: reminders switched off
+        given: []
+        when: {type: settings/configure-reminders, notify_at: "09:00", days: [mon, tue, wed, thu, fri, sat, sun],
+               soon_km: 1000, soon_days: 30, stale_days: 30, enabled: false}
+        then: [{type: settings/reminders-configured, notify_at: "09:00",
+                days: [mon, tue, wed, thu, fri, sat, sun], soon_km: 1000, soon_days: 30, stale_days: 30,
+                enabled: false}]
+      - name: an impossible time or no days
+        given: []
+        when: {type: settings/configure-reminders, notify_at: "25:00", days: [], soon_km: 1000, soon_days: 30,
+               stale_days: 30, enabled: true}
+        then_error: invalid
+
+  - id: settings
+    type: state-view
+    screen: settings
+    read_model: settings
+    events: [settings/language-chosen, settings/reminders-configured]
+    gt:
+      - name: defaults with no events
+        given: []
+        then: {language: en, notify_at: "09:00", days: [mon, tue, wed, thu, fri, sat, sun], soon_km: 1000,
+               soon_days: 30, stale_days: 30, enabled: true}
+      - name: the latest choice wins
+        given:
+          - {type: settings/language-chosen, language: uk}
+          - {type: settings/language-chosen, language: en}
+          - {type: settings/reminders-configured, notify_at: "19:30", days: [sat], soon_km: 1500, soon_days: 45,
+             stale_days: 21, enabled: true}
+        then: {language: en, notify_at: "19:30", days: [sat], soon_km: 1500}
+
+  # ---------------------------------------------------------------- reminders
+  - id: reminders-to-send
+    type: automation
+    screen: notifications
+    # The background job is scheduled for the configured time on the configured days (settings); each run evaluates
+    # this todo list against `today`. Todo: items whose status is soon or overdue and that got no reminder at that
+    # level for the current due point; plus cars whose last reading is older than stale_days. Empty when reminders
+    # are switched off. Notification texts are in the chosen language.
+    read_model: reminders-to-send
+    command: reminder/send
+    events: [schedule/item-defined, schedule/item-changed, maintenance/performed, odometer/recorded, reminder/sent,
+             settings/reminders-configured]
+    gt:
+      - name: a soon item without a reminder is on the list
+        given:
+          - {type: schedule/item-defined, car: forester, item: engine-oil, title: x, every_km: 10000}
+          - {type: maintenance/performed, car: forester, entry: M-0001, at: "2026-01-10", km: 120000,
+             items: [engine-oil], extra: []}
+          - {type: odometer/recorded, car: forester, reading: O-0001, at: "2026-11-01", km: 129400, source: photo}
+        then: {today: "2026-11-01", todo: [{car: forester, item: engine-oil, level: soon, due_km: 130000}]}
+      - name: already reminded at this level -> off the list
+        given:
+          - {type: schedule/item-defined, car: forester, item: engine-oil, title: x, every_km: 10000}
+          - {type: maintenance/performed, car: forester, entry: M-0001, at: "2026-01-10", km: 120000,
+             items: [engine-oil], extra: []}
+          - {type: odometer/recorded, car: forester, reading: O-0001, at: "2026-11-01", km: 129400, source: photo}
+          - {type: reminder/sent, car: forester, item: engine-oil, level: soon, due_km: 130000, at: "2026-11-01"}
+        then: {today: "2026-11-02", todo: []}
+      - name: a wider soon window from the settings puts the item on the list earlier
+        given:
+          - {type: settings/reminders-configured, notify_at: "19:30", days: [sat], soon_km: 1500, soon_days: 45,
+             stale_days: 21, enabled: true}
+          - {type: schedule/item-defined, car: forester, item: engine-oil, title: x, every_km: 10000}
+          - {type: maintenance/performed, car: forester, entry: M-0001, at: "2026-01-10", km: 120000,
+             items: [engine-oil], extra: []}
+          - {type: odometer/recorded, car: forester, reading: O-0001, at: "2026-10-20", km: 128800, source: photo}
+        then: {today: "2026-10-24", todo: [{car: forester, item: engine-oil, level: soon, due_km: 130000}]}
+      - name: no reading for longer than stale_days -> ask for a photo
+        given:
+          - {type: odometer/recorded, car: transit, reading: O-0001, at: "2026-10-01", km: 213000, source: photo}
+        then: {today: "2026-11-05", todo: [{car: transit, kind: odometer-stale, last_at: "2026-10-01"}]}
+      - name: reminders switched off -> nothing to send
+        given:
+          - {type: settings/reminders-configured, notify_at: "09:00", days: [mon], soon_km: 1000, soon_days: 30,
+             stale_days: 30, enabled: false}
+          - {type: odometer/recorded, car: transit, reading: O-0001, at: "2026-10-01", km: 213000, source: photo}
+        then: {today: "2026-11-05", todo: []}
+
+  - id: send-reminder
+    type: state-change
+    screen: notifications
+    command: reminder/send
+    events: [reminder/sent]
+    gwt:
+      - name: the notification is shown and recorded
+        given: [{type: schedule/item-defined, car: forester, item: engine-oil, title: x, every_km: 10000}]
+        when: {type: reminder/send, car: forester, item: engine-oil, level: soon, due_km: 130000, at: "2026-11-01",
+               text: "Subaru Forester: engine oil in 600 km (~21 Nov)"}
+        then: [{type: reminder/sent, car: forester, item: engine-oil, level: soon, due_km: 130000, at: "2026-11-01",
+                text: "Subaru Forester: engine oil in 600 km (~21 Nov)"}]
+      - name: the same level for the same due point is sent once
+        given: [{type: reminder/sent, car: forester, item: engine-oil, level: soon, due_km: 130000,
+                 at: "2026-11-01"}]
+        when: {type: reminder/send, car: forester, item: engine-oil, level: soon, due_km: 130000, at: "2026-11-02",
+               text: x}
+        then: []
