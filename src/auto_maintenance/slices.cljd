@@ -1,0 +1,12 @@
+(ns auto-maintenance.slices
+  "Registry of implemented slices of model/event-model.yaml, keyed by slice id.
+
+  A state-change or translation slice registers {:decide (fn [given-events command] -> [events])}; a rejection
+  throws (ex-info msg {:category \"invalid\"}) with the model's then_error category. A state-view or automation
+  slice registers {:project (fn [events params] -> read-model)}, where params holds :today when the scenario names
+  one. Events and commands are maps with keyword keys and a keyword :type (:car/registered); other values stay
+  as in the model (strings, numbers). The model check (test/auto_maintenance/model_test.cljd) runs every scenario
+  of every registered slice and lists the slices not implemented yet.")
+
+(def registry
+  {})

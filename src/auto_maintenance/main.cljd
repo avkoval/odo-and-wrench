@@ -1,0 +1,15 @@
+(ns auto-maintenance.main
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]))
+
+(defn main []
+  (f/run
+    (m/MaterialApp
+      .title "Auto maintenance"
+      .theme (m/ThemeData .colorSchemeSeed m.Colors/teal))
+    .home
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "Auto maintenance")))
+    .body
+    m/Center
+    (m/Text "Garage is empty")))

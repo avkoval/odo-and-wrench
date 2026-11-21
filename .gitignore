@@ -2,3 +2,20 @@
 *~
 *.~*~
 \#*\#
+
+# ClojureDart
+.cpcache/
+.clojuredart/
+lib/cljd-out/
+test/cljd-out/
+
+# Flutter / Dart
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.idea/
+*.iml
+android/local.properties
+android/.gradle/
+android/app/.cxx/

@@ -1,0 +1,65 @@
+(ns auto-maintenance.model-test
+  "Model check: every Given/When/Then and Given/Then scenario in model/event-model.yaml is run against the slice
+  registered for it in auto-maintenance.slices. Slices without an implementation are reported, not failed."
+  (:require ["dart:io" :as io]
+            ["package:yaml/yaml.dart" :as yaml]
+            [cljd.test :refer [deftest is testing]]
+            [auto-maintenance.slices :as slices]))
+
+(defn ->clj
+  "YAML (YamlMap / YamlList / scalars) to Clojure data with keyword keys."
+  [x]
+  (cond
+    (dart/is? x Map) (into {}
+                       (map (fn [^MapEntry e] [(keyword (str (.-key e))) (->clj (.-value e))]))
+                       (.-entries ^Map x))
+    (dart/is? x List) (into [] (map ->clj) x)
+    :else x))
+
+(defn message
+  "An event or command from the model: its :type becomes a keyword."
+  [m]
+  (cond-> m (string? (:type m)) (update :type keyword)))
+
+(defn subset?
+  "True when `actual` contains everything in `expected`: maps by key (extra keys allowed), vectors element-wise
+  with the same length, scalars by equality."
+  [expected actual]
+  (cond
+    (map? expected) (and (map? actual)
+                      (every? (fn [[k v]] (subset? v (get actual k))) expected))
+    (vector? expected) (and (sequential? actual)
+                         (= (count expected) (count actual))
+                         (every? true? (map subset? expected actual)))
+    :else (= expected actual)))
+
+(def model
+  (->clj (yaml/loadYaml (.readAsStringSync (io/File "model/event-model.yaml")))))
+
+(defn run-gwt [decide {:keys [name given when then then_error]}]
+  (let [given (mapv message given)
+        command (message when)
+        result (try {:events (decide given command)}
+                 (catch cljd.core/ExceptionInfo e {:error (:category (ex-data e))}))]
+    (testing name
+      (if then_error
+        (is (= then_error (:error result)) (str "expected rejection " then_error ", got " result))
+        (is (subset? (mapv message then) (:events result)) (str "got " result))))))
+
+(defn run-gt [project {:keys [name given then]}]
+  (let [params (select-keys then [:today])
+        read-model (project (mapv message given) params)]
+    (testing name
+      (is (subset? then read-model) (str "got " read-model)))))
+
+(deftest model-scenarios
+  (let [all (:slices model)
+        implemented (filter #(contains? slices/registry (:id %)) all)]
+    (doseq [{:keys [id gwt gt]} implemented
+            :let [{:keys [decide project]} (get slices/registry id)]]
+      (testing id
+        (doseq [s gwt] (if decide (run-gwt decide s) (is false (str id ": no :decide registered"))))
+        (doseq [s gt] (if project (run-gt project s) (is false (str id ": no :project registered"))))))
+    (println (str "model check: " (count implemented) "/" (count all) " slices implemented; not yet: "
+               (->> all (remove #(contains? slices/registry (:id %))) (map :id) (interpose ", ") (apply str))))
+    (is (seq all) "the model has slices")))
