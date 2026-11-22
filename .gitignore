@@ -19,3 +19,5 @@ build/
 android/local.properties
 android/.gradle/
 android/app/.cxx/
+REPL.lock
+target/

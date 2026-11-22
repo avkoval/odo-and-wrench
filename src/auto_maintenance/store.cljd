@@ -1,0 +1,29 @@
+(ns auto-maintenance.store
+  "The event store (D7): one append-only SQLite table on the phone. Each row is one event of one stream (a car id
+  or \"settings\"), kept as EDN text. Read models are rebuilt in memory from all events at start."
+  (:require ["package:sqflite/sqflite.dart" :as sql]
+            ["package:path/path.dart" :as path]
+            [cljd.edn :as edn]))
+
+(defn open! []
+  (let [dir (await (sql/getDatabasesPath))]
+    (await (sql/openDatabase (path/join dir "events.db")
+             .version 1
+             .onCreate (fn [^sql/Database db _version]
+                         (.execute db (str "CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+                                        " stream TEXT NOT NULL, type TEXT NOT NULL, data TEXT NOT NULL)")))))))
+
+(defn load-all
+  "All events in the order they were appended."
+  [^sql/Database db]
+  (let [rows (await (.rawQuery db "SELECT data FROM events ORDER BY seq"))]
+    (mapv #(edn/read-string (get % "data")) rows)))
+
+(defn append!
+  "Appends `events` of `stream` in one transaction."
+  [^sql/Database db stream events]
+  (await (.transaction db
+           (fn [^sql/Transaction txn]
+             (doseq [e events]
+               (await (.rawInsert txn "INSERT INTO events (stream, type, data) VALUES (?, ?, ?)"
+                        [stream (subs (str (:type e)) 1) (pr-str e)])))))))

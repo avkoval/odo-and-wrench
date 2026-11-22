@@ -23,14 +23,17 @@
 
 (defn subset?
   "True when `actual` contains everything in `expected`: maps by key (extra keys allowed), vectors element-wise
-  with the same length, scalars by equality."
+  with the same length, numbers by value, other scalars by equality."
   [expected actual]
   (cond
+    ;; a read model may key by plain strings (plates, items) where the YAML keys became keywords
     (map? expected) (and (map? actual)
-                      (every? (fn [[k v]] (subset? v (get actual k))) expected))
+                      (every? (fn [[k v]] (subset? v (get actual k (get actual (name k))))) expected))
     (vector? expected) (and (sequential? actual)
                          (= (count expected) (count actual))
                          (every? true? (map subset? expected actual)))
+    ;; numbers by value: the YAML's 30 matches a computed 30.0
+    (and (number? expected) (number? actual)) (== expected actual)
     :else (= expected actual)))
 
 (def model

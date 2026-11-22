@@ -3,7 +3,7 @@
 #+OPTIONS: toc:nil num:nil ^:nil
 #+TODO: TODO COMMENTED | ACCEPTED REJECTED
 
-Model: [[file:event-model.yaml]] (21 slices, 11 event types). Diagram: [[file:event-model.svg]] (one car, left to
+Model: [[file:event-model.yaml]] (24 slices, 13 event types). Diagram: [[file:event-model.svg]] (one car, left to
 right; the YAML is the full model).
 
 *Approved 2026-11-21.* Nothing is implemented yet; implementation follows slice by slice (=es-slice=). Project setup
@@ -30,6 +30,13 @@ D1–D11 accepted. From Oleksii's answers:
   template. Works with the existing schedule slices.
 - /Intervals from public sources by VIN, researched later/ — amendment under D8.
 - /APK installed by hand; REPL to the phone/ — platform notes below.
+
+* Changes after the third round (2026-11-22): issues to fix
+
+From Oleksii, after adding the Forester on the phone: things that break (left turn signal, weak handbrake) are noted
+as a to-do list per car, copied as one message to the mechanic, and closed when a visit fixed them. New slices
+=report-issue=, =withdraw-issue=, =open-issues=; =log-maintenance= gets =fixes=. Decisions D14–D16 accepted 2026-11-22;
+slices already implemented are not affected.
 
 * What the app does, in one paragraph
 
@@ -58,6 +65,8 @@ photo when the last one is too old. English by default, Ukrainian in the setting
    (=settings=, =choose-language=, =configure-reminders=).
 10. [@10]  /Notifications/ — Android notifications; tapping opens /Car/ (=reminders-to-send=, =send-reminder=).
 11. [@11]  /Costs/ — money per car, year and category (=costs-by-year=).
+12. [@12]  /Car/ → /Issues/ — open issues, add one (text, photo), withdraw, Share / Copy for the mechanic
+    (=open-issues=, =report-issue=, =withdraw-issue=).
 
 * Decisions built into the model — approve or change
 
@@ -175,6 +184,31 @@ CLOSED: [2026-11-21 Sat 20:50]
 - Gap: LPG installed /after/ the car was added has no event yet (=car/fuel-added=). Added when needed.
 - The Subaru Forester has the LPG system (answered 2026-11-21); the scenarios use it.
 
+** ACCEPTED D14 Issues are one-off defects, closed by the diary entry that fixed them
+CLOSED: [2026-11-22 Sun]
+- =issue/reported= (text, date, optional photo) opens an issue; ids =I-0001=, never reused.
+- A diary entry lists what it fixed: =maintenance/log … fixes: [I-0001, I-0002]=, together with scheduled items, free
+  text and cost as usual — the visit is recorded once. Only open issues of that car can be fixed (=invalid=).
+- =issue/withdrawn= with a reason closes an issue without a visit (fixed by hand, false alarm).
+- Voiding the diary entry reopens the issues it fixed (corrections are events, nothing is edited).
+- The /Car/ screen shows open issues above the due list; the /Garage/ can show their count (later, not modelled).
+
+** ACCEPTED D15 Sharing the list with the mechanic is not an event
+CLOSED: [2026-11-22 Sun]
+=open-issues= also builds the message ("Subaru Forester (AA1234BB) — to fix: 1. … 2. …"). A /Share/ button opens
+the Android share sheet (Viber, Telegram, SMS …) with that text, and /Copy/ puts it into the clipboard. Like picking
+a car (D4), sending a message changes no fact about the car, so nothing is recorded. Alternative: record
+=issues/shared= to see later what was sent when; recommendation: not now.
+
+** ACCEPTED D16 Odometer photo comes with the odometer slice, next in line
+CLOSED: [2026-11-22 Sun]
+The photo is not a separate step: =record-odometer= is the translation slice camera → text recognition (ML Kit,
+D3) → confirm (D2), with typing the number as the fallback. Proposed order of the next work:
+1. [@1]  =record-odometer= with photo + typed fallback, =correct-odometer= — readings make the due list real.
+2. [@2]  =log-maintenance= (with =fixes=), =void-maintenance=, =diary=.
+3. [@3]  =report-issue=, =withdraw-issue=, =open-issues= with Share / Copy (after this review).
+4. [@4]  =change-/retire-schedule-item=, settings, reminders, costs; VIN photo and templates last.
+
 * Open questions
 
 None. All decisions D1–D13 accepted on 2026-11-21; the model is approved for implementation.
@@ -220,24 +254,28 @@ Gaps, deliberately left out of the first cut:
 
 * Review checklist
 
-- [ ] register-car (VIN)
-- [ ] garage
-- [ ] car-by-plate
-- [ ] define-schedule-item
-- [ ] change-schedule-item
-- [ ] retire-schedule-item
-- [ ] template-suggestions
-- [ ] apply-schedule-template
-- [ ] record-odometer
-- [ ] correct-odometer
-- [ ] mileage
-- [ ] log-maintenance
-- [ ] void-maintenance
-- [ ] diary
-- [ ] costs-by-year
-- [ ] due-list
-- [ ] choose-language
-- [ ] configure-reminders
-- [ ] settings
-- [ ] reminders-to-send
-- [ ] send-reminder
+- [X] register-car (VIN)
+- [X] garage
+- [X] car-by-plate
+- [X] define-schedule-item
+- [X] change-schedule-item
+- [X] retire-schedule-item
+- [X] template-suggestions
+- [X] apply-schedule-template
+- [X] record-odometer
+- [X] correct-odometer
+- [X] mileage
+- [X] log-maintenance
+- [X] void-maintenance
+- [X] report-issue
+- [X] withdraw-issue
+- [X] open-issues
+- [X] log-maintenance: =fixes= (amended)
+- [X] diary
+- [X] costs-by-year
+- [X] due-list
+- [X] choose-language
+- [X] configure-reminders
+- [X] settings
+- [X] reminders-to-send
+- [X] send-reminder

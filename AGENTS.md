@@ -24,6 +24,7 @@ a scenario disagree, find which one is wrong and ask; an approved scenario is th
   `clj -M:cljd compile` hang forever after "Compiling cljd.core to Dart 3" (ClojureDart#389).
 - `bb test` runs on the host with `flutter test`; no phone needed. Finish every change with a green `bb test`.
 - `bb dev` starts the watcher: compiles on save, hot reloads the app on the device, and prints
-  `ClojureDart REPL listening on port N` — a socket REPL (not nREPL): `nc localhost N`, or `inferior-lisp` in Emacs.
+  `ClojureDart REPL listening on port N` (also in `REPL.lock`, or `bb repl-port`) — a socket REPL, not nREPL:
+  `nc localhost N`, or `M-x cljd-repl` in the user's Emacs (inf-clojure, inline results).
   `(pick!)` selects a widget on the phone screen, `(mount! w)` replaces it. The REPL is beta and can lag.
 - Python, when needed, is `python` (never `python3`).

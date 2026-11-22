@@ -16,7 +16,7 @@
 #   - No server, so slices have no `route`; `screen` names the app screen.
 #   - Distances are whole kilometres, dates are ISO strings ("2026-11-21"), money is a decimal string plus currency.
 #   - IDs are ours, assigned once, never reused: cars by slug (transit, forester), diary entries M-0001, odometer
-#     readings O-0001, schedule items by slug (engine-oil, timing-belt).
+#     readings O-0001, issues I-0001, schedule items by slug (engine-oil, timing-belt).
 #   - Corrections are new events (odometer/corrected, maintenance/voided); nothing is edited in place.
 
 model: auto-maintenance
@@ -30,6 +30,8 @@ glossary:
     history) — computed, never stored
   soon window: how early an item counts as "soon" — by default 1000 km or 30 days before it is due; set in the
     reminder settings, and per schedule item where an item needs more notice (D5)
+  issue: a one-off defect to fix (left turn signal, weak handbrake); open until a diary entry fixes it or the owner
+    withdraws it; open issues can be shared with the mechanic as one message (D14, D15)
   reminder: a phone notification sent once per item and status level, at the time of day set in the reminder settings
   VIN: the 17-character vehicle identification number; decoded into maker (always) and model, year, engine (where the
     VIN carries them) (D10)
@@ -370,6 +372,8 @@ slices:
     # Usually opened right after a photo reading (date and km pre-filled). Past work can be entered too, for the
     # history before the app (D6): an entry may have a lower km than the current reading; a new reading may not.
     # A cost needs a category (D12); an entry without a cost needs none.
+    # `fixes` lists the open issues (D14) this visit fixed; they leave the issue list. An entry must do something:
+    # scheduled items, free-text work or fixes.
     command: maintenance/log
     events: [maintenance/performed]
     gwt:
@@ -407,6 +411,19 @@ slices:
         given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
         when: {type: maintenance/log, car: transit, entry: M-0007, at: "2026-11-05", km: 214000, items: [],
                extra: [x], cost: "100.00", currency: UAH, category: fuel}
+        then_error: invalid
+      - name: a visit that fixes two reported issues
+        given: [{type: issue/reported, car: forester, issue: I-0001, at: "2026-11-20", text: "Left turn signal"},
+                {type: issue/reported, car: forester, issue: I-0002, at: "2026-11-20", text: "Handbrake too weak"}]
+        when: {type: maintenance/log, car: forester, entry: M-0010, at: "2026-11-28", km: 130900, items: [],
+               extra: [], fixes: [I-0001, I-0002], cost: "900.00", currency: UAH, category: repair}
+        then: [{type: maintenance/performed, car: forester, entry: M-0010, at: "2026-11-28", km: 130900, items: [],
+                extra: [], fixes: [I-0001, I-0002], cost: "900.00", currency: UAH, category: repair}]
+      - name: fixing an issue that is not open (unknown, already fixed or withdrawn)
+        given: [{type: issue/reported, car: forester, issue: I-0001, at: "2026-11-20", text: x},
+                {type: issue/withdrawn, car: forester, issue: I-0001, reason: x}]
+        when: {type: maintenance/log, car: forester, entry: M-0011, at: "2026-11-28", km: 130900, items: [],
+               extra: [], fixes: [I-0001]}
         then_error: invalid
       - name: nothing done
         given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
@@ -483,6 +500,85 @@ slices:
                                       by_category: {service: "2850.00", repair: "6400.00", tyres: "1200.00"}},
                                      {year: 2025, currency: UAH, total: "2500.00",
                                       by_category: {service: "2500.00"}}]}
+
+  # ---------------------------------------------------------------- issues (things to fix, D14)
+  - id: report-issue
+    type: state-change
+    screen: car
+    # A one-off defect noticed on the car ("left turn signal does not work"). Not a schedule item: it is open until a
+    # diary entry fixes it (log-maintenance `fixes`) or the owner withdraws it.
+    command: issue/report
+    events: [issue/reported]
+    gwt:
+      - name: a defect is noted with a photo
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
+        when: {type: issue/report, car: forester, issue: I-0001, at: "2026-11-20", text: "Left turn signal",
+               photo: "photos/forester/2026-11-20-issue.jpg"}
+        then: [{type: issue/reported, car: forester, issue: I-0001, at: "2026-11-20", text: "Left turn signal",
+                photo: "photos/forester/2026-11-20-issue.jpg"}]
+      - name: a blank text
+        given: [{type: car/registered, car: forester, name: x, plate: "AA1234BB"}]
+        when: {type: issue/report, car: forester, issue: I-0001, at: "2026-11-20", text: "  "}
+        then_error: invalid
+      - name: unknown car
+        given: []
+        when: {type: issue/report, car: lada, issue: I-0001, at: "2026-11-20", text: x}
+        then_error: not-found
+
+  - id: withdraw-issue
+    type: state-change
+    screen: car
+    # The issue went away without a garage visit (fixed by hand, false alarm). Fixed issues are closed by the diary.
+    command: issue/withdraw
+    events: [issue/withdrawn]
+    gwt:
+      - name: an issue fixed by hand is withdrawn with a reason
+        given: [{type: issue/reported, car: forester, issue: I-0001, at: "2026-11-20", text: "Left turn signal"}]
+        when: {type: issue/withdraw, car: forester, issue: I-0001, reason: "bulb replaced myself"}
+        then: [{type: issue/withdrawn, car: forester, issue: I-0001, reason: "bulb replaced myself"}]
+      - name: an issue that is not open
+        given: [{type: issue/reported, car: forester, issue: I-0001, at: "2026-11-20", text: x},
+                {type: maintenance/performed, car: forester, entry: M-0010, at: "2026-11-28", km: 130900,
+                 items: [], extra: [], fixes: [I-0001]}]
+        when: {type: issue/withdraw, car: forester, issue: I-0001, reason: x}
+        then_error: not-found
+
+  - id: open-issues
+    type: state-view
+    screen: car
+    # Open issues of a car, oldest first, and the same list as a ready message to copy or share with the mechanic
+    # (Android share sheet / clipboard; sharing is not an event, D15). Voiding the diary entry that fixed an issue
+    # reopens it.
+    read_model: open-issues
+    events: [car/registered, issue/reported, issue/withdrawn, maintenance/performed, maintenance/voided]
+    gt:
+      - name: two open issues and the message for the mechanic
+        given:
+          - {type: car/registered, car: forester, name: "Subaru Forester", plate: "AA1234BB"}
+          - {type: issue/reported, car: forester, issue: I-0001, at: "2026-11-20", text: "Left turn signal"}
+          - {type: issue/reported, car: forester, issue: I-0002, at: "2026-11-21", text: "Handbrake too weak"}
+        then: {car: forester,
+               issues: [{issue: I-0001, at: "2026-11-20", text: "Left turn signal"},
+                        {issue: I-0002, at: "2026-11-21", text: "Handbrake too weak"}],
+               message: "Subaru Forester (AA1234BB) — to fix:\n1. Left turn signal\n2. Handbrake too weak"}
+      - name: fixed and withdrawn issues leave the list
+        given:
+          - {type: car/registered, car: forester, name: "Subaru Forester", plate: "AA1234BB"}
+          - {type: issue/reported, car: forester, issue: I-0001, at: "2026-11-20", text: "Left turn signal"}
+          - {type: issue/reported, car: forester, issue: I-0002, at: "2026-11-21", text: "Handbrake too weak"}
+          - {type: issue/reported, car: forester, issue: I-0003, at: "2026-11-22", text: "Rattle in the boot"}
+          - {type: maintenance/performed, car: forester, entry: M-0010, at: "2026-11-28", km: 130900, items: [],
+             extra: [], fixes: [I-0001]}
+          - {type: issue/withdrawn, car: forester, issue: I-0003, reason: "loose jack, tied it"}
+        then: {issues: [{issue: I-0002, text: "Handbrake too weak"}]}
+      - name: voiding the entry that fixed an issue reopens it
+        given:
+          - {type: car/registered, car: forester, name: "Subaru Forester", plate: "AA1234BB"}
+          - {type: issue/reported, car: forester, issue: I-0001, at: "2026-11-20", text: "Left turn signal"}
+          - {type: maintenance/performed, car: forester, entry: M-0010, at: "2026-11-28", km: 130900, items: [],
+             extra: [], fixes: [I-0001]}
+          - {type: maintenance/voided, car: forester, entry: M-0010, reason: "logged for the wrong car"}
+        then: {issues: [{issue: I-0001, text: "Left turn signal"}]}
 
   # ---------------------------------------------------------------- what is due
   - id: due-list

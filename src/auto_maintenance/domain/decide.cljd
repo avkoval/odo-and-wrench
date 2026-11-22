@@ -1,0 +1,85 @@
+(ns auto-maintenance.domain.decide
+  "Command handling: `state` is the fold of the stream's events (`evolve`), `decide` turns a command into events
+  or rejects it with (ex-info msg {:category \"invalid\" | \"not-found\" | \"conflict\"}). Pure, no I/O."
+  (:require [clojure.string :as str]))
+
+;; ------------------------------------------------------------------ state
+
+(def initial {:cars {} :plates {} :vins {} :items {}})
+
+(defmulti evolve (fn [_state event] (:type event)))
+
+(defmethod evolve :default [state _] state)
+
+(defmethod evolve :car/registered [state {:keys [car plate vin] :as e}]
+  (cond-> (assoc-in state [:cars car] e)
+    plate (assoc-in [:plates plate] car)
+    vin (assoc-in [:vins vin] car)))
+
+(defmethod evolve :schedule/item-defined [state {:keys [car item] :as e}]
+  (assoc-in state [:items [car item]] (assoc e :active true)))
+
+(defmethod evolve :schedule/item-changed [state {:keys [car item] :as e}]
+  (update-in state [:items [car item]] merge (dissoc e :type :reason)))
+
+(defmethod evolve :schedule/item-retired [state {:keys [car item]}]
+  (assoc-in state [:items [car item] :active] false))
+
+(defn state-of [events] (reduce evolve initial events))
+
+;; ------------------------------------------------------------------ helpers
+
+(defn reject [category msg] (throw (ex-info msg {:category category})))
+
+(defn present [m ks] (into {} (filter (comp some? val)) (select-keys m ks)))
+
+(def ^:private look-alikes
+  ;; Cyrillic letters on Ukrainian plates that look like Latin ones
+  [["А" "A"] ["В" "B"] ["Е" "E"] ["І" "I"] ["К" "K"] ["М" "M"] ["Н" "H"] ["О" "O"] ["Р" "P"] ["С" "C"]
+   ["Т" "T"] ["Х" "X"]])
+
+(defn normalize-plate [plate]
+  (when plate
+    (reduce (fn [s [cyr lat]] (str/replace s cyr lat))
+      (-> plate str/upper-case (str/replace #"[\s-]" ""))
+      look-alikes)))
+
+(defn valid-vin? [vin]
+  (and (string? vin) (some? (re-matches #"[A-HJ-NPR-Z0-9]{17}" vin))))
+
+(defn positive-or-absent? [x] (or (nil? x) (and (int? x) (pos? x))))
+
+(defn require-car [state car]
+  (when-not (get-in state [:cars car]) (reject "not-found" (str "unknown car " car))))
+
+;; ------------------------------------------------------------------ commands
+
+(defmulti decide (fn [_state command] (:type command)))
+
+(defmethod decide :car/register [state {:keys [car name vin plate] :as cmd}]
+  (let [plate (normalize-plate plate)]
+    (cond
+      (str/blank? name) (reject "invalid" "name is blank")
+      (not (valid-vin? vin)) (reject "invalid" "VIN must be 17 characters A-Z/0-9 without I, O, Q")
+      (get-in state [:cars car]) (reject "conflict" (str "car " car " exists"))
+      (get-in state [:vins vin]) (reject "conflict" (str "VIN " vin " belongs to another car"))
+      (and plate (get-in state [:plates plate])) (reject "conflict" (str "plate " plate " belongs to another car")))
+    [(merge {:type :car/registered}
+       (present (assoc cmd :plate plate)
+         [:car :vin :name :make :model :year :engine :fuels :plate :photo :decoded]))]))
+
+(defmethod decide :schedule/define-item [state {:keys [car item title every_km every_months soon_km soon_days] :as cmd}]
+  (require-car state car)
+  (cond
+    (str/blank? title) (reject "invalid" "title is blank")
+    (and (nil? every_km) (nil? every_months)) (reject "invalid" "an interval in km or months is required")
+    (not (every? positive-or-absent? [every_km every_months soon_km soon_days]))
+    (reject "invalid" "intervals must be positive whole numbers")
+    (get-in state [:items [car item] :active]) (reject "conflict" (str item " is already in the schedule")))
+  [(merge {:type :schedule/item-defined}
+     (present cmd [:car :item :title :every_km :every_months :soon_km :soon_days]))])
+
+(defn handle
+  "Decide `command` against the events of its stream."
+  [events command]
+  (decide (state-of events) command))

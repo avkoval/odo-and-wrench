@@ -3,14 +3,23 @@
 ;; so this project uses Flutter 3.47.9 from ~/sdk until that is fixed. `bb tasks` lists them.
 {:min-bb-version "1.3.0"
  :tasks
- {:init
+ {:requires ([clojure.string :as str])
+  :init
   (do
     (def home (System/getProperty "user.home"))
     (def flutter-bin (str home "/sdk/flutter-3.47.9/bin"))
     (def android-home (str home "/Android/Sdk"))
     (def env {"PATH" (str flutter-bin ":" android-home "/platform-tools:" (System/getenv "PATH"))
               "ANDROID_HOME" android-home})
-    (defn sh [& args] (apply shell {:extra-env env} args)))
+    (defn sh [& args] (apply shell {:extra-env env} args))
+    (defn repl-port
+      "Port of the live REPL of `bb dev`: REPL.lock holds \"<port> <pid>\"; nil when absent or its process is gone."
+      []
+      (let [f (java.io.File. "REPL.lock")]
+        (when (.exists f)
+          (let [[port pid] (str/split (str/trim (slurp f)) (re-pattern " +"))]
+            (when (some-> pid parse-long java.lang.ProcessHandle/of (.orElse nil) .isAlive)
+              port))))))
 
   doctor {:doc "flutter doctor with the pinned Flutter"
           :task (sh "flutter doctor")}
@@ -24,8 +33,17 @@
   dev {:doc "Watch, hot reload and socket REPL on a device: bb dev [-d <device-id>] (default: ask)"
        :task (apply sh "clj -M:cljd flutter" *command-line-args*)}
 
-  test {:doc "Run the tests, including the model scenarios (no device needed)"
-        :task (apply sh "clj -M:test:cljd test" *command-line-args*)}
+  repl-port {:doc "Port of the ClojureDart socket REPL of the running `bb dev` (empty output when none runs)"
+             :task (when-let [port (repl-port)] (println port))}
+
+  test {:doc "Run the tests, including the model check (no device). While `bb dev` runs (it holds REPL.lock), the
+              tests run in a synced copy under target/test-copy so both can work at once."
+        :task (if (repl-port)
+                (do (sh "mkdir -p target/test-copy")
+                    (sh (str "rsync -a --delete --exclude=/build --exclude=/target --exclude=/android --exclude=/linux"
+                             " --exclude=/REPL.lock --exclude=/.git ./ target/test-copy/"))
+                    (apply shell {:extra-env env :dir "target/test-copy"} "clj -M:test:cljd test" *command-line-args*))
+                (apply sh "clj -M:test:cljd test" *command-line-args*))}
 
   apk {:doc "Build a debug APK: build/app/outputs/flutter-apk/app-debug.apk"
        :depends [compile]

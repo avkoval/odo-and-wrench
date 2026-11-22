@@ -1,15 +1,212 @@
 (ns auto-maintenance.main
+  "Screens. They render read models and send commands through app/execute!; no business logic here."
   (:require ["package:flutter/material.dart" :as m]
-            [cljd.flutter :as f]))
+            [cljd.flutter :as f]
+            [clojure.string :as str]
+            [auto-maintenance.app :as app]))
+
+;; ------------------------------------------------------------------ helpers
+
+(defn text-of [^m/TextEditingController c] (str/trim (.-text c)))
+
+(defn int-of [c] (int/tryParse (text-of c)))
+
+(defn blank->nil [s] (when-not (str/blank? s) s))
+
+(defn field
+  ([controller label] (field controller label nil))
+  ([controller label keyboard]
+   (m/Padding
+     .padding (m/EdgeInsets.symmetric .vertical 6.0)
+     .child (m/TextField
+              .controller controller
+              .keyboardType (or keyboard m/TextInputType.text)
+              .decoration (m/InputDecoration .labelText label .border (m/OutlineInputBorder))))))
+
+(defn show-error [ctx {:keys [message]}]
+  (.showSnackBar (m/ScaffoldMessenger.of ctx) (m/SnackBar .content (m/Text (str message)))))
+
+(defn push! [ctx page]
+  (.push (m/Navigator.of ctx) (#/(m/MaterialPageRoute Object) .builder (fn [_] page)))
+  nil)
+
+(defn submit!
+  "Runs the command; on success closes the page, on rejection shows why."
+  [ctx command]
+  (let [error (await (app/execute! command))]
+    (if error
+      (show-error ctx error)
+      (.pop (m/Navigator.of ctx)))))
+
+(def status-color
+  {"overdue" m/Colors.red "soon" m/Colors.orange "ok" m/Colors.green "unknown" m/Colors.grey})
+
+(defn status-chip [status]
+  (m/Chip
+    .label (m/Text (str status) .style (m/TextStyle .color m/Colors.white))
+    .backgroundColor (status-color status m/Colors.grey)))
+
+;; ------------------------------------------------------------------ add schedule item
+
+(defn add-item-page [car]
+  (f/widget
+    :context ctx
+    :managed [title (m/TextEditingController)
+              every-km (m/TextEditingController)
+              every-months (m/TextEditingController)
+              soon-km (m/TextEditingController)]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "Add schedule item")))
+    .body
+    (m/ListView .padding (m/EdgeInsets.all 16.0))
+    .children
+    [(field title "Job, e.g. Engine oil + filter")
+     (field every-km "Every … km" m/TextInputType.number)
+     (field every-months "Every … months" m/TextInputType.number)
+     (field soon-km "Warn … km before (optional)" m/TextInputType.number)
+     (m/FilledButton
+       .onPressed (fn []
+                    (let [taken (map :item (:items (app/due-list @app/!events car)))]
+                      (submit! ctx {:type :schedule/define-item :car car
+                                    :item (app/slug (text-of title) taken) :title (text-of title)
+                                    :every_km (int-of every-km) :every_months (int-of every-months)
+                                    :soon_km (int-of soon-km)}))
+                    nil)
+       .child (m/Text "Save"))]))
+
+;; ------------------------------------------------------------------ car
+
+(defn due-subtitle [{:keys [due_km due_at remaining_km predicted_at last_km last_at status]}]
+  (if (= "unknown" status)
+    "never done — enter the last time from the service book"
+    (str/join " · " (remove nil? [(when last_km (str "done " last_km " km, " last_at))
+                                  (when due_km (str "due " due_km " km"))
+                                  (when remaining_km (str remaining_km " km left"))
+                                  (when due_at (str "by " due_at))
+                                  (when predicted_at (str "≈ " predicted_at))]))))
+
+(defn car-page [car-id]
+  (f/widget
+    :context ctx
+    :watch [events app/!events]
+    :let [car (app/car events car-id)
+          {:keys [km km_at]} (app/mileage events car-id)
+          {:keys [items]} (app/due-list events car-id)]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text (str (:name car))))
+      .floatingActionButton (m/FloatingActionButton
+                              .onPressed #(push! ctx (add-item-page car-id))
+                              .tooltip "Add schedule item"
+                              .child (m/Icon m/Icons.add)))
+    .body
+    (m/ListView)
+    .children
+    (into [(m/ListTile
+             .title (m/Text (str (:plate car) "  ·  " (:make car) " " (:model car) " " (:year car)))
+             .subtitle (m/Text (if km (str km " km on " km_at) "no odometer reading yet")))
+           (m/Divider)]
+      (if (empty? items)
+        [(m/ListTile .title (m/Text "No schedule yet — tap + to add a job"))]
+        (for [{:keys [item title status] :as it} items]
+          (m/ListTile
+            .key (m/ValueKey item)
+            .title (m/Text (str title))
+            .subtitle (m/Text (due-subtitle it))
+            .trailing (status-chip status)))))))
+
+;; ------------------------------------------------------------------ add car
+
+(defn add-car-page []
+  (f/widget
+    :context ctx
+    :managed [!choice (atom {:fuel "petrol" :lpg false}) :dispose nil
+              name (m/TextEditingController)
+              vin (m/TextEditingController)
+              plate (m/TextEditingController)
+              make (m/TextEditingController)
+              model (m/TextEditingController)
+              year (m/TextEditingController)
+              engine (m/TextEditingController)]
+    :watch [{:keys [fuel lpg]} !choice]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "Add car")))
+    .body
+    (m/ListView .padding (m/EdgeInsets.all 16.0))
+    .children
+    [(field name "Name, e.g. Subaru Forester")
+     (field vin "VIN (17 characters)")
+     (field plate "Number plate")
+     (field make "Make")
+     (field model "Model")
+     (field year "Year" m/TextInputType.number)
+     (field engine "Engine, e.g. EJ20 2.0 petrol")
+     (m/Row
+       .children
+       [(m/Text "Fuel: ")
+        (m/DropdownButton
+          .value fuel
+          .items [(m/DropdownMenuItem .value "petrol" .child (m/Text "petrol"))
+                  (m/DropdownMenuItem .value "diesel" .child (m/Text "diesel"))]
+          .onChanged (fn [v] (swap! !choice assoc :fuel v) nil))
+        (m/Spacer)
+        (m/Text "LPG")
+        (m/Switch .value lpg .onChanged (fn [v] (swap! !choice assoc :lpg v) nil))])
+     (m/FilledButton
+       .onPressed (fn []
+                    (let [taken (map :car (:cars (app/garage @app/!events)))]
+                      (submit! ctx {:type :car/register
+                                    :car (app/slug (text-of name) taken) :name (text-of name)
+                                    :vin (str/upper-case (text-of vin)) :plate (blank->nil (text-of plate))
+                                    :make (blank->nil (text-of make)) :model (blank->nil (text-of model))
+                                    :year (int-of year) :engine (blank->nil (text-of engine))
+                                    :fuels (cond-> [fuel] lpg (conj "lpg"))}))
+                    nil)
+       .child (m/Text "Save"))]))
+
+;; ------------------------------------------------------------------ garage
+
+(defn garage-subtitle [{:keys [plate km most_urgent]}]
+  (str/join " · " (remove nil? [plate
+                                (when km (str km " km"))
+                                (when most_urgent (str (:title most_urgent) ": " (:status most_urgent)))])))
+
+(def garage-page
+  (f/widget
+    :context ctx
+    :watch [events app/!events]
+    :let [{:keys [cars]} (app/garage events)]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "Garage"))
+      .floatingActionButton (m/FloatingActionButton
+                              .onPressed #(push! ctx (add-car-page))
+                              .tooltip "Add car"
+                              .child (m/Icon m/Icons.add)))
+    .body
+    (m/ListView)
+    .children
+    (if (empty? cars)
+      [(m/ListTile .title (m/Text "Garage is empty — tap + to add a car"))]
+      (for [{:keys [car name most_urgent] :as c} cars]
+        (m/ListTile
+          .key (m/ValueKey car)
+          .leading (m/Icon m/Icons.directions_car)
+          .title (m/Text (str name))
+          .subtitle (m/Text (garage-subtitle c))
+          .trailing (when most_urgent (status-chip (:status most_urgent)))
+          .onTap #(push! ctx (car-page car)))))))
+
+;; ------------------------------------------------------------------ main
 
 (defn main []
+  (m/WidgetsFlutterBinding.ensureInitialized)
+  (await (app/start!))
   (f/run
     (m/MaterialApp
       .title "Auto maintenance"
-      .theme (m/ThemeData .colorSchemeSeed m.Colors/teal))
+      .theme (m/ThemeData .colorSchemeSeed m/Colors.teal))
     .home
-    (m/Scaffold
-      .appBar (m/AppBar .title (m/Text "Auto maintenance")))
-    .body
-    m/Center
-    (m/Text "Garage is empty")))
+    garage-page))
+
+(comment 
+  (count @auto-maintenance.app/!events)
+)

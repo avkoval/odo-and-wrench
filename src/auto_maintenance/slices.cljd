@@ -6,7 +6,15 @@
   slice registers {:project (fn [events params] -> read-model)}, where params holds :today when the scenario names
   one. Events and commands are maps with keyword keys and a keyword :type (:car/registered); other values stay
   as in the model (strings, numbers). The model check (test/auto_maintenance/model_test.cljd) runs every scenario
-  of every registered slice and lists the slices not implemented yet.")
+  of every registered slice and lists the slices not implemented yet."
+  (:require [auto-maintenance.domain.decide :as d]
+            [auto-maintenance.domain.views :as v]))
 
 (def registry
-  {})
+  {"register-car" {:decide d/handle}
+   "garage" {:project v/garage}
+   "car-by-plate" {:project v/car-by-plate}
+   "define-schedule-item" {:decide d/handle}
+   "mileage" {:project v/mileage}
+   "settings" {:project v/settings}
+   "due-list" {:project v/due-list}})

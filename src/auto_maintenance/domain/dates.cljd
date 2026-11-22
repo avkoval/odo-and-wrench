@@ -1,0 +1,26 @@
+(ns auto-maintenance.domain.dates
+  "Calendar dates as ISO strings (\"2026-11-21\"), computed in UTC so DST never shifts a day."
+  (:require [clojure.string :as str]))
+
+(defn parse ^DateTime [s]
+  (let [[y m d] (map #(int/parse %) (str/split s #"-"))]
+    (DateTime/utc y m d)))
+
+(defn fmt [^DateTime d]
+  (subs (.toIso8601String d) 0 10))
+
+(defn plus-months [s n]
+  (let [d (parse s)]
+    (fmt (DateTime/utc (.-year d) (+ (.-month d) n) (.-day d)))))
+
+(defn plus-days [s n]
+  (fmt (.add (parse s) (Duration .days n))))
+
+(defn days-between
+  "Whole days from date a to date b (negative when b is earlier)."
+  [a b]
+  (.-inDays (.difference (parse b) (parse a))))
+
+(defn today []
+  (let [n (DateTime/now)]
+    (fmt (DateTime/utc (.-year n) (.-month n) (.-day n)))))

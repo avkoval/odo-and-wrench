@@ -1,0 +1,130 @@
+(ns auto-maintenance.domain.views
+  "Read models: pure functions of events (one car's stream plus the settings stream)."
+  (:require [auto-maintenance.domain.dates :as dates]))
+
+(defn of-type [t events] (filter #(= t (:type %)) events))
+
+;; ------------------------------------------------------------------ settings
+
+(def default-settings
+  {:language "en" :notify_at "09:00" :days ["mon" "tue" "wed" "thu" "fri" "sat" "sun"]
+   :soon_km 1000 :soon_days 30 :stale_days 30 :enabled true})
+
+(defn settings [events _params]
+  (reduce (fn [s e]
+            (case (:type e)
+              :settings/language-chosen (assoc s :language (:language e))
+              :settings/reminders-configured (merge s (dissoc e :type))
+              s))
+    default-settings events))
+
+;; ------------------------------------------------------------------ garage
+
+(defn car-by-plate [events _params]
+  (into {} (map (juxt :plate :car)) (of-type :car/registered events)))
+
+;; ------------------------------------------------------------------ mileage
+
+(defn voided-entries [events] (set (map :entry (of-type :maintenance/voided events))))
+
+(defn diary-entries
+  "Diary entries that are not voided, in log order."
+  [events]
+  (let [voided (voided-entries events)]
+    (remove #(voided (:entry %)) (of-type :maintenance/performed events))))
+
+(defn readings
+  "Every known (date, km): odometer readings after corrections, and diary entries."
+  [events]
+  (let [corrected (into {} (map (juxt :reading :km)) (of-type :odometer/corrected events))]
+    (concat
+      (for [e (of-type :odometer/recorded events)]
+        {:at (:at e) :km (get corrected (:reading e) (:km e))})
+      (for [e (diary-entries events)] {:at (:at e) :km (:km e)}))))
+
+(defn km-per-day
+  "Average daily distance over the 90 days before the latest reading; nil without two dated readings."
+  [rs]
+  (when (seq rs)
+    (let [latest (reduce max (map :km rs))
+          last-at (last (sort (map :at rs)))
+          window (filter #(<= (dates/days-between (:at %) last-at) 90) rs)
+          first-at (first (sort (map :at window)))
+          days (dates/days-between first-at last-at)
+          low (reduce min (map :km window))]
+      (when (pos? days) (/ (- latest low) days)))))
+
+(defn mileage [events _params]
+  (let [rs (readings events)
+        car (some :car events)]
+    (if (empty? rs)
+      {:car car}
+      (let [top (apply max-key :km rs)]
+        (cond-> {:car car :km (:km top) :km_at (:at top)}
+          (km-per-day rs) (assoc :km_per_day (km-per-day rs)))))))
+
+;; ------------------------------------------------------------------ due list
+
+(defn schedule
+  "Active schedule items in the order they were defined, with their current intervals."
+  [events]
+  (let [{:keys [order items]}
+        (reduce (fn [acc {:keys [item] :as e}]
+                  (case (:type e)
+                    :schedule/item-defined (-> acc (update :order conj item) (assoc-in [:items item] (dissoc e :type)))
+                    :schedule/item-changed (update-in acc [:items item] merge (dissoc e :type :reason))
+                    :schedule/item-retired (update acc :items dissoc item)
+                    acc))
+          {:order [] :items {}} events)]
+    (keep items (distinct order))))
+
+(defn- present [m] (into {} (filter (comp some? val)) m))
+
+(defn item-status [{:keys [item title every_km every_months] :as it} entries {:keys [km km_per_day]} today settings]
+  (let [done (filter #(some #{item} (:items %)) entries)
+        last-done (last (sort-by :at done))]
+    (if-not last-done
+      {:item item :title title :status "unknown"}
+      (let [due-km (when every_km (+ (:km last-done) every_km))
+            due-at (when every_months (dates/plus-months (:at last-done) every_months))
+            remaining (when (and due-km km) (- due-km km))
+            days-left (when (and due-at today) (dates/days-between today due-at))
+            soon-km (or (:soon_km it) (:soon_km settings))
+            soon-days (or (:soon_days it) (:soon_days settings))
+            predicted (when (and remaining (pos? remaining) km_per_day (pos? km_per_day) today)
+                        (dates/plus-days today (.ceil (/ remaining km_per_day))))
+            status (cond
+                     (or (and remaining (<= remaining 0)) (and days-left (<= days-left 0))) "overdue"
+                     (or (and remaining (<= remaining soon-km)) (and days-left (<= days-left soon-days))) "soon"
+                     :else "ok")]
+        (present {:item item :title title :last_km (:km last-done) :last_at (:at last-done)
+                  :due_km due-km :due_at due-at :remaining_km remaining :predicted_at predicted
+                  :status status})))))
+
+(defn due-list [events {:keys [today]}]
+  (let [entries (diary-entries events)
+        m (mileage events nil)
+        s (settings events nil)]
+    {:today today
+     :items (mapv #(item-status % entries m today s) (schedule events))}))
+
+;; ------------------------------------------------------------------ garage
+
+(def ^:private urgency {"overdue" 0 "soon" 1 "ok" 2 "unknown" 3})
+
+(defn most-urgent
+  "The item to show first: overdue before soon before ok before unknown, then the least distance left."
+  [items]
+  (first (sort-by (juxt #(urgency (:status %)) #(or (:remaining_km %) 0)) items)))
+
+(defn garage
+  "Every car with its last mileage and most urgent item. `events` is the whole log (all cars and settings)."
+  [events {:keys [today]}]
+  (let [settings-events (filter #(= "settings" (namespace (:type %))) events)]
+    {:cars (vec (for [{:keys [car name plate]} (of-type :car/registered events)
+                      :let [own (concat settings-events (filter #(= car (:car %)) events))
+                            {:keys [km km_at]} (mileage own nil)
+                            urgent (most-urgent (:items (due-list own {:today today})))]]
+                  (cond-> {:car car :name name :plate plate}
+                    km (assoc :km km :km_at km_at)
+                    urgent (assoc :most_urgent (select-keys urgent [:item :title :status :remaining_km])))))}))
