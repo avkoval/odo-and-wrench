@@ -47,6 +47,12 @@
 
 (defn open-issues [events car] (v/open-issues (car-events events car) nil))
 
+(defn diary [events car] (v/diary (car-events events car) nil))
+
+(defn costs [events car] (v/costs-by-year (car-events events car) nil))
+
+(defn schedule [events car] (v/schedule (car-events events car)))
+
 (defn slug
   "An id from a name (\"Subaru Forester\" -> subaru-forester), unique among `taken`."
   [s taken]

@@ -36,6 +36,28 @@
   repl-port {:doc "Port of the ClojureDart socket REPL of the running `bb dev` (empty output when none runs)"
              :task (when-let [port (repl-port)] (println port))}
 
+  repl-eval {:doc "Evaluate ONE form in the running app (ClojureDart socket REPL of `bb dev`) and print the result:
+                   bb repl-eval '(count @auto-maintenance.app/!events)'. Waits for the prompt before sending and closes
+                   only after the result and the next prompt arrived (ClojureDart#364)."
+             :task (let [port (or (repl-port) (do (println "no running `bb dev` (REPL.lock)") (System/exit 1)))
+                         code (or (first *command-line-args*) (do (println "usage: bb repl-eval '<form>'") (System/exit 1)))
+                         prompt (re-pattern "(?m)^[^\\s=>]+=> $")
+                         sock (doto (java.net.Socket. "localhost" (parse-long port)) (.setSoTimeout 120000))
+                         in (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream sock) "UTF-8"))
+                         out (java.io.PrintWriter. (java.io.OutputStreamWriter. (.getOutputStream sock) "UTF-8") true)
+                         until-prompt (fn [] (loop [sb (StringBuilder.)]
+                                               (let [c (.read in)]
+                                                 (if (neg? c)
+                                                   (str sb)
+                                                   (let [t (str (.append sb (char c)))]
+                                                     (if (re-find prompt t) t (recur sb)))))))]
+                     (until-prompt)
+                     (.println out code)
+                     (println (str/trim (str/replace (until-prompt) prompt "")))
+                     ;; close only now, with nothing pending: ClojureDart's single output thread dies on a write to a
+                     ;; closed client socket (Broken pipe) and then no evaluation is ever acknowledged again (#364)
+                     (.close sock))}
+
   test {:doc "Run the tests, including the model check (no device). While `bb dev` runs (it holds REPL.lock), the
               tests run in a synced copy under target/test-copy so both can work at once."
         :task (if (repl-port)

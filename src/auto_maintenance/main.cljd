@@ -268,6 +268,155 @@
           .subtitle (m/Text (str issue " · since " at " · long-press to withdraw"))
           .onLongPress #(withdraw-dialog ctx car-id i))))))
 
+;; ------------------------------------------------------------------ diary
+
+(def categories ["service" "repair" "tyres" "other"])
+
+(defn log-entry-page
+  "log-maintenance: one visit — scheduled jobs, free-text work, fixed issues, cost. Past work can be entered too."
+  [car-id]
+  (f/widget
+    :context ctx
+    :let [events @app/!events
+          jobs (app/schedule events car-id)
+          open (:issues (app/open-issues events car-id))
+          current-km (:km (app/mileage events car-id))]
+    :managed [!form (atom {:items #{} :fixes #{} :category "service" :photo nil}) :dispose nil
+              at (m/TextEditingController .text (dates/today))
+              km (m/TextEditingController .text (str (or current-km "")))
+              extra (m/TextEditingController)
+              note (m/TextEditingController)
+              cost (m/TextEditingController)
+              place (m/TextEditingController)]
+    :watch [{:keys [items fixes category photo]} !form]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "Log work")))
+    .body
+    (m/ListView .padding (m/EdgeInsets.all 16.0))
+    .children
+    (concat
+      [(field at "Date (YYYY-MM-DD)")
+       (field km "km" m/TextInputType.number)]
+      (when (seq jobs)
+        (cons (m/Padding .padding (m/EdgeInsets.only .top 8.0) .child (m/Text "Scheduled jobs done"))
+          (for [{:keys [item title]} jobs]
+            (m/CheckboxListTile
+              .key (m/ValueKey item)
+              .value (contains? items item)
+              .title (m/Text (str title))
+              .onChanged (fn [v] (swap! !form update :items (if v conj disj) item) nil)))))
+      (when (seq open)
+        (cons (m/Padding .padding (m/EdgeInsets.only .top 8.0) .child (m/Text "Issues fixed"))
+          (for [{:keys [issue text]} open]
+            (m/CheckboxListTile
+              .key (m/ValueKey issue)
+              .value (contains? fixes issue)
+              .title (m/Text (str text))
+              .onChanged (fn [v] (swap! !form update :fixes (if v conj disj) issue) nil)))))
+      [(m/TextField .controller extra .maxLines nil .minLines 2
+         .decoration (m/InputDecoration .labelText "Other work, one per line" .border (m/OutlineInputBorder)))
+       (field note "Note, e.g. Castrol 5W-30, 6.2 l")
+       (m/Row .children [(m/Expanded .child (field cost "Cost, UAH" m/TextInputType.number))
+                         (m/SizedBox .width 12.0)
+                         (m/DropdownButton
+                           .value category
+                           .items (for [c categories] (m/DropdownMenuItem .value c .child (m/Text c)))
+                           .onChanged (fn [v] (swap! !form assoc :category v) nil))])
+       (field place "Garage / place")
+       (m/OutlinedButton.icon
+         .onPressed (fn [] (when-some [p (await (photos/take-photo!))] (swap! !form assoc :photo p)) nil)
+         .icon (m/Icon m/Icons.receipt_long)
+         .label (m/Text (if photo "Another receipt photo" "Receipt photo (optional)")))
+       (m/FilledButton
+         .onPressed (fn []
+                      (let [events @app/!events
+                            entry (app/next-id events :entry "M")
+                            date (text-of at)
+                            cost-text (blank->nil (text-of cost))]
+                        (submit! ctx (into {} (filter (comp some? val))
+                                       {:type :maintenance/log :car car-id :entry entry :at date :km (int-of km)
+                                        :items (vec (filter items (map :item jobs)))
+                                        :extra (vec (remove str/blank? (map str/trim (str/split-lines (.-text extra)))))
+                                        :fixes (when (seq fixes) (vec (filter fixes (map :issue open))))
+                                        :note (blank->nil (text-of note))
+                                        :cost (when cost-text (str (or (some-> (double/tryParse cost-text) (.toStringAsFixed 2))
+                                                                       cost-text)))
+                                        :currency (when cost-text "UAH")
+                                        :category (when cost-text category)
+                                        :place (blank->nil (text-of place))
+                                        :photos (when photo
+                                                  [(await (photos/keep! photo car-id (str date "-" entry ".jpg")))])})))
+                      nil)
+         .child (m/Text "Save"))])))
+
+(defn void-dialog [ctx car-id {:keys [entry at]}]
+  (m/showDialog
+    .context ctx
+    .builder (f/build
+               :context dctx
+               :managed [reason (m/TextEditingController)]
+               (m/AlertDialog
+                 .title (m/Text (str "Void " entry " of " at "?"))
+                 .content (field reason "Why, e.g. logged for the wrong car")
+                 .actions [(m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text "Cancel"))
+                           (m/FilledButton
+                             .onPressed (fn []
+                                          (submit! dctx {:type :maintenance/void :car car-id :entry entry
+                                                         :reason (text-of reason)})
+                                          nil)
+                             .child (m/Text "Void"))])))
+  nil)
+
+(defn costs-page [car-id]
+  (f/widget
+    :watch [events app/!events]
+    :let [{:keys [years]} (app/costs events car-id)]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "Costs")))
+    .body
+    (m/ListView)
+    .children
+    (if (empty? years)
+      [(m/ListTile .title (m/Text "No costs yet — add a cost when you log work"))]
+      (for [{:keys [year currency total by_category]} years]
+        (m/ListTile
+          .key (m/ValueKey (str year currency))
+          .title (m/Text (str year ": " total " " currency))
+          .subtitle (m/Text (str/join " · " (for [c categories :let [v (get by_category c)] :when v] (str c " " v)))))))))
+
+(defn entry-subtitle [{:keys [titles extra fixed note cost currency category place]}]
+  (str/join "\n" (remove str/blank? [(str/join ", " (concat titles extra))
+                                      (when (seq fixed) (str "fixed: " (str/join ", " fixed)))
+                                      (str/join " · " (remove nil? [(when cost (str cost " " currency " (" category ")"))
+                                                                    place note]))])))
+
+(defn diary-page [car-id]
+  (f/widget
+    :context ctx
+    :watch [events app/!events]
+    :let [{:keys [entries]} (app/diary events car-id)]
+    (m/Scaffold
+      .appBar (m/AppBar
+                .title (m/Text "Diary")
+                .actions [(m/IconButton .icon (m/Icon m/Icons.payments) .tooltip "Costs"
+                            .onPressed #(push! ctx (costs-page car-id)))])
+      .floatingActionButton (m/FloatingActionButton.extended
+                              .onPressed #(push! ctx (log-entry-page car-id))
+                              .icon (m/Icon m/Icons.build)
+                              .label (m/Text "Log work")))
+    .body
+    (m/ListView)
+    .children
+    (if (empty? entries)
+      [(m/ListTile .title (m/Text "Nothing logged yet — tap Log work; past work from the service book too"))]
+      (for [{:keys [entry at km] :as e} entries]
+        (m/ListTile
+          .key (m/ValueKey entry)
+          .isThreeLine true
+          .title (m/Text (str at "  ·  " km " km"))
+          .subtitle (m/Text (entry-subtitle e))
+          .onLongPress #(void-dialog ctx car-id e))))))
+
 ;; ------------------------------------------------------------------ car
 
 (defn due-subtitle [{:keys [due_km due_at remaining_km predicted_at last_km last_at status]}]
@@ -290,7 +439,11 @@
       .appBar (m/AppBar
                 .title (m/Text (str (:name car)))
                 .actions [(m/IconButton .icon (m/Icon m/Icons.speed) .tooltip "Odometer reading"
-                            .onPressed #(push! ctx (odometer-page car-id)))])
+                            .onPressed #(push! ctx (odometer-page car-id)))
+                          (m/IconButton .icon (m/Icon m/Icons.build) .tooltip "Log work"
+                            .onPressed #(push! ctx (log-entry-page car-id)))
+                          (m/IconButton .icon (m/Icon m/Icons.history) .tooltip "Diary"
+                            .onPressed #(push! ctx (diary-page car-id)))])
       .floatingActionButton (m/FloatingActionButton
                               .onPressed #(push! ctx (add-item-page car-id))
                               .tooltip "Add schedule item"

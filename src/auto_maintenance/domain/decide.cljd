@@ -8,47 +8,64 @@
 
 (def initial {:cars {} :plates {} :vins {} :items {} :readings {} :log {} :issues {} :entries {}})
 
-(defmulti evolve (fn [_state event] (:type event)))
-
 (defn- log-event
   "Every event of a car is also kept in its log, for rules that need a read model (current km)."
   [state {:keys [car] :as e}]
   (cond-> state car (update-in [:log car] (fnil conj []) e)))
 
-(defmethod evolve :default [state _] state)
+(defn- evolve-default [state _] state)
 
-(defmethod evolve :car/registered [state {:keys [car plate vin] :as e}]
+(defn- evolve-car-registered [state {:keys [car plate vin] :as e}]
   (cond-> (assoc-in state [:cars car] e)
     plate (assoc-in [:plates plate] car)
     vin (assoc-in [:vins vin] car)))
 
-(defmethod evolve :schedule/item-defined [state {:keys [car item] :as e}]
+(defn- evolve-schedule-item-defined [state {:keys [car item] :as e}]
   (assoc-in state [:items [car item]] (assoc e :active true)))
 
-(defmethod evolve :schedule/item-changed [state {:keys [car item] :as e}]
+(defn- evolve-schedule-item-changed [state {:keys [car item] :as e}]
   (update-in state [:items [car item]] merge (dissoc e :type :reason)))
 
-(defmethod evolve :schedule/item-retired [state {:keys [car item]}]
+(defn- evolve-schedule-item-retired [state {:keys [car item]}]
   (assoc-in state [:items [car item] :active] false))
 
-(defmethod evolve :odometer/recorded [state {:keys [reading] :as e}]
+(defn- evolve-odometer-recorded [state {:keys [reading] :as e}]
   (assoc-in state [:readings reading] e))
 
-(defmethod evolve :issue/reported [state {:keys [issue] :as e}]
+(defn- evolve-issue-reported [state {:keys [issue] :as e}]
   (assoc-in state [:issues issue] (assoc e :open true)))
 
-(defmethod evolve :issue/withdrawn [state {:keys [issue]}]
+(defn- evolve-issue-withdrawn [state {:keys [issue]}]
   (assoc-in state [:issues issue :open] false))
 
 (defn- set-open [state issues open?]
   (reduce (fn [s i] (cond-> s (get-in s [:issues i]) (assoc-in [:issues i :open] open?))) state issues))
 
-(defmethod evolve :maintenance/performed [state {:keys [entry fixes] :as e}]
+(defn- evolve-maintenance-performed [state {:keys [entry fixes] :as e}]
   (-> state (assoc-in [:entries entry] e) (set-open fixes false)))
 
-(defmethod evolve :maintenance/voided [state {:keys [entry]}]
+(defn- evolve-maintenance-voided [state {:keys [entry]}]
   ;; voiding the visit reopens what it fixed (D14)
-  (set-open state (get-in state [:entries entry :fixes]) true))
+  (-> state
+    (set-open (get-in state [:entries entry :fixes]) true)
+    (assoc-in [:entries entry :voided] true)))
+
+(defn evolve
+  "Applies one event to the state. Plain `case` dispatch (not a multimethod): hot reload updates function bodies
+  but does not re-run top-level defmethod registrations."
+  [state event]
+  (case (:type event)
+    :default (evolve-default state event)
+    :car/registered (evolve-car-registered state event)
+    :schedule/item-defined (evolve-schedule-item-defined state event)
+    :schedule/item-changed (evolve-schedule-item-changed state event)
+    :schedule/item-retired (evolve-schedule-item-retired state event)
+    :odometer/recorded (evolve-odometer-recorded state event)
+    :issue/reported (evolve-issue-reported state event)
+    :issue/withdrawn (evolve-issue-withdrawn state event)
+    :maintenance/performed (evolve-maintenance-performed state event)
+    :maintenance/voided (evolve-maintenance-voided state event)
+    state))
 
 (defn state-of [events] (reduce (fn [s e] (evolve (log-event s e) e)) initial events))
 
@@ -82,9 +99,7 @@
 
 ;; ------------------------------------------------------------------ commands
 
-(defmulti decide (fn [_state command] (:type command)))
-
-(defmethod decide :car/register [state {:keys [car name vin plate] :as cmd}]
+(defn- decide-car-register [state {:keys [car name vin plate] :as cmd}]
   (let [plate (normalize-plate plate)]
     (cond
       (str/blank? name) (reject "invalid" "name is blank")
@@ -96,7 +111,7 @@
        (present (assoc cmd :plate plate)
          [:car :vin :name :make :model :year :engine :fuels :plate :photo :decoded]))]))
 
-(defmethod decide :schedule/define-item [state {:keys [car item title every_km every_months soon_km soon_days] :as cmd}]
+(defn- decide-schedule-define-item [state {:keys [car item title every_km every_months soon_km soon_days] :as cmd}]
   (require-car state car)
   (cond
     (str/blank? title) (reject "invalid" "title is blank")
@@ -107,7 +122,7 @@
   [(merge {:type :schedule/item-defined}
      (present cmd [:car :item :title :every_km :every_months :soon_km :soon_days]))])
 
-(defmethod decide :odometer/record [state {:keys [car km] :as cmd}]
+(defn- decide-odometer-record [state {:keys [car km] :as cmd}]
   (require-car state car)
   (let [current (:km (v/mileage (get-in state [:log car]) nil))]
     (cond
@@ -116,24 +131,62 @@
   [(merge {:type :odometer/recorded}
      (present cmd [:car :reading :at :km :source :photo :recognized_km :confidence]))])
 
-(defmethod decide :odometer/correct [state {:keys [car reading km reason] :as cmd}]
+(defn- decide-odometer-correct [state {:keys [car reading km reason] :as cmd}]
   (cond
     (not= car (get-in state [:readings reading :car])) (reject "not-found" (str "unknown reading " reading))
     (str/blank? reason) (reject "invalid" "a correction needs a reason")
     (not (and (int? km) (pos? km))) (reject "invalid" "km must be a positive whole number"))
   [(merge {:type :odometer/corrected} (present cmd [:car :reading :km :reason]))])
 
-(defmethod decide :issue/report [state {:keys [car text] :as cmd}]
+(defn- decide-issue-report [state {:keys [car text] :as cmd}]
   (require-car state car)
   (when (str/blank? text) (reject "invalid" "describe what is broken"))
   [(merge {:type :issue/reported} (present (update cmd :text str/trim) [:car :issue :at :text :photo]))])
 
-(defmethod decide :issue/withdraw [state {:keys [car issue reason] :as cmd}]
+(defn- decide-issue-withdraw [state {:keys [car issue reason] :as cmd}]
   (let [{open :open owner :car} (get-in state [:issues issue])]
     (cond
       (not (and open (= owner car))) (reject "not-found" (str "no open issue " issue))
       (str/blank? reason) (reject "invalid" "say why the issue is withdrawn")))
   [(merge {:type :issue/withdrawn} (present cmd [:car :issue :reason]))])
+
+(def cost-categories #{"service" "repair" "tyres" "other"})
+
+(defn- decide-maintenance-log [state {:keys [car km items extra fixes cost category] :as cmd}]
+  (require-car state car)
+  (cond
+    (not (and (int? km) (pos? km))) (reject "invalid" "km must be a positive whole number")
+    (and (empty? items) (empty? (remove str/blank? extra)) (empty? fixes))
+    (reject "invalid" "nothing done: tick a job, describe the work or pick a fixed issue")
+    (not-every? #(get-in state [:items [car %] :active]) items)
+    (reject "invalid" "a job that is not in this car's schedule")
+    (not-every? #(let [{:keys [open] owner :car} (get-in state [:issues %])] (and open (= owner car))) fixes)
+    (reject "invalid" "only open issues of this car can be fixed")
+    (and cost (not (cost-categories category))) (reject "invalid" "a cost needs a category: service, repair, tyres or other"))
+  [(merge {:type :maintenance/performed}
+     (present (cond-> cmd extra (update :extra #(vec (remove str/blank? %))))
+       [:car :entry :at :km :items :extra :fixes :note :cost :currency :category :place :photos]))])
+
+(defn- decide-maintenance-void [state {:keys [car entry reason] :as cmd}]
+  (let [e (get-in state [:entries entry])]
+    (cond
+      (not (and e (= car (:car e)) (not (:voided e)))) (reject "not-found" (str "no diary entry " entry))
+      (str/blank? reason) (reject "invalid" "say why the entry is voided")))
+  [(merge {:type :maintenance/voided} (present cmd [:car :entry :reason]))])
+
+(defn decide
+  "Turns a command into events or rejects it; `case` dispatch for the same hot-reload reason as `evolve`."
+  [state command]
+  (case (:type command)
+    :car/register (decide-car-register state command)
+    :schedule/define-item (decide-schedule-define-item state command)
+    :odometer/record (decide-odometer-record state command)
+    :odometer/correct (decide-odometer-correct state command)
+    :issue/report (decide-issue-report state command)
+    :issue/withdraw (decide-issue-withdraw state command)
+    :maintenance/log (decide-maintenance-log state command)
+    :maintenance/void (decide-maintenance-void state command)
+    (reject "invalid" (str "unknown command " (:type command)))))
 
 (defn handle
   "Decide `command` against the events of its stream."

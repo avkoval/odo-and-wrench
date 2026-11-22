@@ -1,6 +1,7 @@
 (ns auto-maintenance.domain.views
   "Read models: pure functions of events (one car's stream plus the settings stream)."
-  (:require [auto-maintenance.domain.dates :as dates]))
+  (:require [auto-maintenance.domain.dates :as dates]
+            [clojure.string :as str]))
 
 (defn of-type [t events] (filter #(= t (:type %)) events))
 
@@ -156,3 +157,41 @@
      :message (when (seq issues)
                 (apply str (str name (when plate (str " (" plate ")")) " — to fix:")
                   (map-indexed (fn [i {:keys [text]}] (str "\n" (inc i) ". " text)) issues)))}))
+
+;; ------------------------------------------------------------------ diary and costs
+
+(defn diary
+  "Diary entries of a car, newest first, with schedule titles and fixed issues resolved; voided entries hidden."
+  [events _params]
+  (let [titles (into {} (map (juxt :item :title)) (of-type :schedule/item-defined events))
+        issues (into {} (map (juxt :issue :text)) (of-type :issue/reported events))]
+    {:car (some :car events)
+     :entries (->> (diary-entries events)
+                (sort-by (juxt :at :entry))
+                reverse
+                (mapv (fn [{:keys [items fixes] :as e}]
+                        (into {} (filter (comp some? val))
+                          (assoc (select-keys e [:entry :at :km :extra :note :cost :currency :category :place :photos])
+                            :titles (mapv #(get titles % %) items)
+                            :fixed (when (seq fixes) (mapv #(get issues % %) fixes)))))))}))
+
+(defn cents
+  "\"2850.00\" -> 285000; money is kept as decimal strings, summed as whole cents."
+  [s]
+  (let [[whole frac] (str/split (str/trim s) #"\.")
+        frac (subs (str (or frac "") "00") 0 2)]
+    (+ (* 100 (int/parse whole)) (int/parse frac))))
+
+(defn money [c] (str (quot c 100) "." (.padLeft (str (rem c 100)) 2 "0")))
+
+(defn costs-by-year
+  "Money spent per year (newest first), currency and category, from diary entries with a cost (D12)."
+  [events _params]
+  (let [costed (filter :cost (diary-entries events))
+        groups (group-by (juxt #(int/parse (subs (:at %) 0 4)) :currency) costed)]
+    {:car (some :car events)
+     :years (vec (for [[[year currency] es] (reverse (sort-by key groups))]
+                   {:year year :currency currency
+                    :total (money (reduce + (map (comp cents :cost) es)))
+                    :by_category (into {} (for [[cat ces] (group-by :category es)]
+                                            [cat (money (reduce + (map (comp cents :cost) ces)))]))}))}))

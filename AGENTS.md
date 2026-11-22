@@ -2,6 +2,30 @@
 
 ClojureDart + Flutter Android app, event-sourced, all data on the phone. Read [README.md](README.md) for the tasks.
 
+## Development is REPL-driven
+
+Changes reach the running app through its REPL, form by form, and are checked there
+before the file is considered done. The user's `bb dev` (ClojureDart flutter watcher on the phone) is the running
+system; its socket REPL port is in `REPL.lock`.
+
+1. Evaluate in the live app with `bb repl-eval '<one form>'` (prints the result). Use it to look at data
+   (`(count @auto-maintenance.app/!events)`, `(auto-maintenance.app/due-list @auto-maintenance.app/!events "forester")`),
+   to try a command against the real log (`(auto-maintenance.domain.decide/handle @auto-maintenance.app/!events {...})`
+   — pure, appends nothing) and to load a changed function before saving it.
+2. Save the file; the watcher recompiles and hot-reloads. Hot reload updates function bodies but does NOT re-run
+   top-level forms, so: no `defmulti`/`defmethod` (dispatch with `case`), no new top-level state that code needs —
+   or evaluate that top-level form through the REPL.
+3. Finish with `bb test` (model check + unit tests, runs in `target/test-copy` while `bb dev` holds the lock).
+
+Keeping the REPL alive (ClojureDart REPL is beta, ClojureDart#364): one thread in the watcher routes the app's
+output to the REPL clients and acknowledges each evaluation. If it writes to a client socket that is already closed,
+it dies with "Broken pipe" and no evaluation is ever acknowledged again — every session hangs.
+- One form per `bb repl-eval`; it disconnects only after the result and the next prompt arrived. Never kill a
+  client mid-evaluation, never send anything you will not wait for (`:repl/quit` is evaluated like any form), and do
+  not hot-restart (`R`) while an evaluation is pending.
+- A REPL that prints nothing, not even its banner, is wedged: only restarting `bb dev` helps. Ask the user to do it;
+  never start or stop the user's `bb dev` yourself.
+
 ## Model first
 
 The approved model is [model/event-model.yaml](model/event-model.yaml); decisions D1–D13 are in

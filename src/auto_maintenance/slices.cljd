@@ -18,6 +18,10 @@
    "record-odometer" {:decide d/handle}
    "correct-odometer" {:decide d/handle}
    "mileage" {:project v/mileage}
+   "log-maintenance" {:decide d/handle}
+   "void-maintenance" {:decide d/handle}
+   "diary" {:project v/diary}
+   "costs-by-year" {:project v/costs-by-year}
    "report-issue" {:decide d/handle}
    "withdraw-issue" {:decide d/handle}
    "open-issues" {:project v/open-issues}
