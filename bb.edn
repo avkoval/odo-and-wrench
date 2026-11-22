@@ -107,6 +107,18 @@
        :depends [compile]
        :task (sh "flutter build apk --debug")}
 
+  release {:doc "Release APK built from a clean clone of HEAD (compiled without tests — test namespaces leaking into
+                 lib/cljd-out break release builds): target/release/build/app/outputs/flutter-apk/app-release.apk"
+           :task (do (sh "rm -rf target/release")
+                     (sh "git clone -q . target/release")
+                     (shell {:extra-env env :dir "target/release"} "clojure -M:cljd compile")
+                     (shell {:extra-env env :dir "target/release"} "flutter build apk --release")
+                     (println "APK: target/release/build/app/outputs/flutter-apk/app-release.apk"))}
+
+  install-release {:doc "Build the release APK and install it on the connected phone (keeps the app's data)"
+                   :depends [release]
+                   :task (sh "adb install -r target/release/build/app/outputs/flutter-apk/app-release.apk")}
+
   install {:doc "Install the debug APK on the connected phone"
            :depends [apk]
            :task (sh "adb install -r build/app/outputs/flutter-apk/app-debug.apk")}

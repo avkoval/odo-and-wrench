@@ -1,28 +1,57 @@
 # auto-maintenance
 
-Android app (ClojureDart + Flutter) that keeps a maintenance diary for cars: a car is identified by its VIN, its
-schedule comes from a template, the odometer is read from a photo, and the app reminds what is due next. Everything
-stays on the phone as an event log.
+An Android app that keeps a maintenance diary for your cars and tells you what is due next. Written in
+[ClojureDart](https://github.com/Tensegritics/ClojureDart) on Flutter, event-sourced, with all data on the phone.
 
-- What the app does: [model/event-model.yaml](model/event-model.yaml) (slices with Given/When/Then scenarios),
-  [model/event-model.svg](model/event-model.svg), decisions in [model/review-2026-11-21-first-cut.org](model/review-2026-11-21-first-cut.org).
-- How to work on it: [AGENTS.md](AGENTS.md).
+- **Cars** — added with their VIN, plate, engine and fuels (petrol, diesel, LPG).
+- **Schedule** — recurring jobs per car (engine oil every 10 000 km or 12 months, LPG filters every 8 000 km), with
+  the last time each was done. Status ok / soon / overdue / unknown, km left and a predicted date from your average
+  daily mileage.
+- **Odometer from a photo** — the camera and on-device text recognition (Google ML Kit) read the mileage; you confirm
+  the number. The photo and the recognised number are kept.
+- **Diary** — what was done, when, at what km, with cost, place and receipt photo; per-year costs by category.
+- **To fix** — one-off defects (left turn signal, weak handbrake); share the list with the mechanic in one message;
+  a garage visit that fixed them closes them.
+- Coming: reminder notifications at a time you choose, Ukrainian translation, schedule templates by car type.
 
-## Requirements
+## How it is built
 
-- Clojure CLI, JDK 21, Babashka (`bb`).
-- Flutter **3.47.9** in `~/sdk/flutter-3.47.9` — not 3.50: ClojureDart hangs with Flutter 3.50
-  ([ClojureDart#389](https://github.com/tensegritics/ClojureDart/issues/389)). The `bb` tasks put it first on `PATH`,
-  so the system Flutter can stay at any version.
-- Android SDK in `~/Android/Sdk` (platform 36), a phone with USB debugging or wireless debugging enabled.
+The behaviour is designed first as an [event model](model/event-model.yaml) — every feature is a slice with
+Given/When/Then scenarios ([diagram](model/event-model.svg), [decisions](model/review-2026-11-21-first-cut.org)). The
+code implements exactly those slices:
 
-## Tasks
+- `src/auto_maintenance/domain/` — pure Clojure: `decide` (command → events or rejection), `evolve`, read models.
+- `src/auto_maintenance/store.cljd` — the only storage: an append-only SQLite table of events on the phone.
+- `src/auto_maintenance/main.cljd` — Flutter screens; they render read models and send commands, nothing else.
+- `test/auto_maintenance/model_test.cljd` — runs every scenario of the model against the code and reports which
+  slices are implemented (`bb test`).
+
+## Install on a phone
+
+Download `app-release.apk` from the releases page (or build it, below), copy it to the phone and open it; Android
+asks once to allow installs from that app (Files, browser). Or with the phone on USB and USB debugging enabled:
+
+```
+adb install -r app-release.apk
+```
+
+## Build
+
+Requirements: Clojure CLI, JDK 21, [Babashka](https://babashka.org) (`bb`), Android SDK (platform 36), and Flutter
+**3.47.9** in `~/sdk/flutter-3.47.9` — ClojureDart's compiler hangs with Flutter 3.50
+([ClojureDart#389](https://github.com/tensegritics/ClojureDart/issues/389)); the `bb` tasks put the pinned Flutter
+first on `PATH`.
 
 ```
 bb tasks          # list
-bb test           # compile + run tests, including the model check (no device)
-bb dev            # run on a device with hot reload and a socket REPL (bb dev -d <device-id>)
-bb apk            # build/app/outputs/flutter-apk/app-debug.apk
-bb install        # build and adb install on the connected phone
-bb doctor         # flutter doctor with the pinned Flutter
+bb test           # compile and run the tests, including the model check (no device needed)
+bb dev            # run on a connected phone with hot reload and a socket REPL (bb dev -d <device-id>)
+bb release        # release APK from a clean clone: target/release/build/app/outputs/flutter-apk/app-release.apk
+bb install        # build the debug APK and adb install it
 ```
+
+Notes for contributors and coding agents: [AGENTS.md](AGENTS.md).
+
+## License
+
+[MIT](LICENSE)

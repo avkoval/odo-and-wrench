@@ -1,0 +1,92 @@
+#+TITLE: ClojureDart REPL gets stuck — problem description for a fix
+#+DATE: 2026-11-22
+#+OPTIONS: toc:nil num:nil ^:nil
+
+* Goal
+
+REPL-driven development of this app: the agent (=bb repl-eval=) and the user (Emacs
+=M-x cljd-repl=, inf-clojure) evaluate forms in the app running on the phone, many times in a row, without the REPL
+ever getting stuck. Today it works for one or two evaluations and then stops answering until =bb dev= is restarted.
+
+* Setup
+
+- ClojureDart =0.9.20261002= (sha =247b3c2c=), Flutter =3.47.9= pinned in [[file:bb.edn]] (3.50 hangs the compiler,
+  ClojureDart#389), Android phone (Pixel 9 Pro XL) over adb, Arch Linux, Clojure CLI 1.12.6, JDK 21.
+- =bb dev= ([[file:bb.edn]]) runs =clojure -M:cljd flutter -d <device>= (the watcher: compiles on save, hot-reloads, opens
+  a socket REPL on a random port, writes =REPL.lock= = "<port> <pid>"). Since commit =7cf0df0= =bb dev= pipes the
+  watcher's stdout through bb and records the REPL state in =target/repl-state= (=ready= after "REPL listening" or
+  "Reloaded … libraries", =reloading= after "Performing hot reload", =restarting=).
+- Clients: =bb repl-eval '<form>' [ns]= ([[file:bb.edn]]: waits for the prompt, sends one form, reads to the next
+  prompt, closes); Emacs [[file:~/.emacs.d/lisp/cljd-repl/cljd-repl.el]] (inf-clojure over the same port).
+- How the REPL works: [[file:.clojuredart/cache]] is not the source; read the ClojureDart sources,
+  =clj/src/cljd/build.clj= of that sha:
+  - =repl= (≈ line 357): every session first evaluates =(ns cljd.user (:require [cljd.flutter.repl …] …))=; each
+    evaluation runs under =(locking *compiler-state …)= and waits on a promise =p= that the app delivers (=ack!=)
+    after the hot reload that loads the compiled form.
+  - The output thread (≈ lines 663–740) reads =flutter run= output line by line: tagged REPL lines go to the
+    session's socket (=out=), "!" lines call =ack!=; a small state machine (=:idle=, =:reloading=, =:reload-failed=,
+    =:restarting=, =:waiting-end-of-restart=) decides when the next pending reload ("r") may be sent — only in
+    =:idle=, and =:reloading= ends only on a line matching =Reloaded .+ of .+ libraries in .+.=
+  - =compile-files= (file watcher, ≈ line 610) also takes =(locking *compiler-state …)=.
+
+* What worked
+
+1. [@1]  2026-11-21, hello-world app: =printf '(+ 1 2)\n(str *ns*)\n' | nc localhost <port>= → banner, =3=,
+   ="cljd.user"=.
+2. [@2]  2026-11-22 ≈ 12:30, full app (sqflite, ML Kit, share_plus): =bb repl-eval '(count @auto-maintenance.app/!events)'=
+   → =5= on the first try.
+
+* Ways it got stuck (evidence)
+
+1. [@1]  *Client disconnects with output pending → output thread dies.* The second =bb repl-eval= sent =:repl/quit=
+   (evaluated as a keyword, not special in ClojureDart's REPL loop) and closed the socket; the watcher printed
+   =Exception in thread "Thread-18" java.net.SocketException: Broken pipe … at cljd.build$compile_cli$fn__6209.invoke(build.clj:631)=.
+   The thread that routes app output and acks is gone, so no evaluation is ever acknowledged again. Same effect
+   very likely from batch-Emacs test clients that were killed mid-session. Fixed on the client side (no
+   =:repl/quit=, close only after the result and the next prompt), not in ClojureDart (an uncaught =IOException= on
+   a write to one session kills the shared thread).
+2. [@2]  *Session opened before the app was ready → compiler lock held forever.* =REPL.lock= is written when the
+   socket server starts, long before the app runs; "REPL listening on port" is printed only after the app's =RDY=.
+   A client that connected on =REPL.lock= started the session's =ns= evaluation; its reload never completed, =p= was
+   never delivered, =*compiler-state= stayed locked, and *file recompilation stopped too*: the user's terminal showed
+   no "Performing hot reload..." for any later file save, while =bb test= in a copy compiled fine. Mitigated by
+   =target/repl-state= (=bb repl-eval= refuses unless =ready=).
+3. [@3]  *Hot restart during a pending evaluation.* The user pressed =R= while a =bb repl-eval= was opening its
+   session; afterwards no banner for any client. The state machine handles =:restarting= by restarting sessions,
+   but the evaluation that already holds the lock waits on its promise.
+4. [@4]  *Still open: first evaluation after "ready" starts a hot reload that never finishes.* 2026-11-22, after a
+   clean start of =bb dev= (state =ready=, "REPL listening on port 36047"), the first =bb repl-eval= timed out after
+   120 s with no output at all (not even the banner); =target/repl-state= went to =reloading= and stayed there (no
+   =Reloaded … libraries= line was seen). From then on Emacs =M-x cljd-repl= shows an empty buffer. The watcher's
+   terminal output around that reload was not captured yet — *capture it first* (it shows whether Flutter rejected
+   the reload, printed an error, or printed "Reloaded" in a form that neither the ClojureDart state machine nor
+   =bb dev= recognise).
+
+* What changed between "worked" and case 4 (candidates)
+
+- The app's =main= now awaits the database before =f/run= ([[file:src/auto_maintenance/main.cljd]], =app/start!=): a
+  hot reload while the first frame is still slow ("Skipped 983 frames", "Davey! duration=8237ms") may be refused or
+  delayed.
+- =bb dev= now pipes the watcher's stdout (=:out :stream=) instead of inheriting the terminal: ClojureDart may switch
+  off ANSI, line buffering or terminal detection when stdout is not a TTY; check whether the reload/ack lines differ.
+- Many file saves by the agent while the REPL was in use (each save = a compile under the same lock + an "r").
+- =clojure= instead of =clj= (no rlwrap) since commit =6961506=.
+
+* Suggested investigation
+
+1. [@1]  Start =bb dev=, wait for "REPL listening", then from a second terminal =nc localhost <port>= and type
+   =(+ 1 2)=; record the watcher's full terminal output and =adb logcat -s flutter= at the same time.
+2. [@2]  Repeat with =clojure -M:cljd flutter -d <device>= run directly (stdout = terminal) to rule out the pipe.
+3. [@3]  Repeat with =git stash= of nothing but a trivial =main= (no =await app/start!=) to rule out the slow start.
+4. [@4]  If the cause is in ClojureDart: a local fork via =:local/root= in [[file:deps.edn]] that (a) catches
+   =IOException= per session in the output thread, (b) gives the =ack= promise a timeout and releases the lock,
+   (c) leaves =:reloading= on any reload-finished/failed line (incl. "rejected"). Upstream: comment on
+   [[https://github.com/tensegritics/ClojureDart/issues/364][ClojureDart#364]] with the findings.
+
+* Done when
+
+- 20 consecutive =bb repl-eval= calls (including defining a function in =auto-maintenance.domain.decide= and calling
+  it) answer, while the user's Emacs =M-x cljd-repl= session is also connected, with file saves in between.
+- A killed client, a hot restart (=R=) and a file save during an evaluation do not leave the REPL stuck (or the stuck
+  state is reported and recovers without restarting =bb dev=).
+- [[file:AGENTS.md]] "Development is REPL-driven" describes the final rules.
