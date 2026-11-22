@@ -28,11 +28,11 @@
            :task (sh "flutter devices")}
 
   compile {:doc "Compile ClojureDart sources to Dart (lib/cljd-out)"
-           :task (sh "clj -M:cljd compile")}
+           :task (sh "clojure -M:cljd compile")}
 
   dev {:doc "Watch, hot reload and socket REPL on a device: bb dev [-d <device-id>] (default: ask). Keys (r, R, q)
              need Enter. Tracks the REPL's state in target/repl-state for bb repl-eval."
-       :task (let [proc (p/process (into ["clj" "-M:cljd" "flutter"] *command-line-args*)
+       :task (let [proc (p/process (into ["clojure" "-M:cljd" "flutter"] *command-line-args*)
                           {:extra-env env :in :inherit :err :inherit :out :stream})
                    state-file (io/file "target/repl-state")
                    state! (fn [s] (spit state-file (str s " " (System/currentTimeMillis) "\n")))]
@@ -47,7 +47,9 @@
                    (str/includes? line "listening on port") (state! "ready")
                    (str/includes? line "Performing hot reload") (state! "reloading")
                    (and (str/includes? line "Reloaded ") (str/includes? line " libraries")) (state! "ready")
-                   (str/includes? line "Performing hot restart") (state! "restarting")))
+                   (str/includes? line "Performing hot restart") (state! "restarting")
+                   ;; after `q` the watcher itself keeps running and the next key hits a closed pipe: end it all
+                   (str/includes? line "Application finished.") (p/destroy-tree proc)))
                (state! "stopped")
                (System/exit (:exit (deref proc))))}
 
@@ -98,8 +100,8 @@
                 (do (sh "mkdir -p target/test-copy")
                     (sh (str "rsync -a --delete --exclude=/build --exclude=/target --exclude=/android --exclude=/linux"
                              " --exclude=/REPL.lock --exclude=/.git ./ target/test-copy/"))
-                    (apply shell {:extra-env env :dir "target/test-copy"} "clj -M:test:cljd test" *command-line-args*))
-                (apply sh "clj -M:test:cljd test" *command-line-args*))}
+                    (apply shell {:extra-env env :dir "target/test-copy"} "clojure -M:test:cljd test" *command-line-args*))
+                (apply sh "clojure -M:test:cljd test" *command-line-args*))}
 
   apk {:doc "Build a debug APK: build/app/outputs/flutter-apk/app-debug.apk"
        :depends [compile]
@@ -110,4 +112,4 @@
            :task (sh "adb install -r build/app/outputs/flutter-apk/app-debug.apk")}
 
   clean {:doc "Remove ClojureDart and Flutter build output"
-         :task (do (sh "clj -M:cljd clean") (sh "flutter clean"))}}}
+         :task (do (sh "clojure -M:cljd clean") (sh "flutter clean"))}}}
