@@ -123,5 +123,8 @@
            :depends [apk]
            :task (sh "adb install -r build/app/outputs/flutter-apk/app-debug.apk")}
 
+  docs {:doc "Regenerate docs/slices.md (slices + implementation status) and the model diagram (svg, png)"
+        :task (load-file "scripts/docs.clj")}
+
   clean {:doc "Remove ClojureDart and Flutter build output"
          :task (do (sh "clojure -M:cljd clean") (sh "flutter clean"))}}}

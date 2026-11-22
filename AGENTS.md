@@ -36,6 +36,21 @@ it dies with "Broken pipe" and no evaluation is ever acknowledged again — ever
 - A REPL that prints nothing, not even its banner, is wedged: only restarting `bb dev` helps. Ask the user to do it;
   never start or stop the user's `bb dev` yourself.
 
+## Document every problem you do not solve
+
+Several agents, models and the user work on this repo; problems get fixed by whoever picks them up, but only if they
+are written down. So any problem you cannot resolve — and any workaround you apply instead of a fix — gets its own
+file in the project root, written when you give up or work around, not at the end:
+
+- Name: `YYYYMMDD-<topic>-issue.org` (e.g. [20261122-repl-issue.org](20261122-repl-issue.org),
+  [20261122-build-workarounds-issue.org](20261122-build-workarounds-issue.org)).
+- Content: goal, setup (versions, commands), evidence (exact error text, log lines, commits), what was tried, candidate
+  causes, suggested investigation, and "done when". Link the workaround in code or config back to the file.
+- Mention the new file in your report to the user. When an issue is fixed, say so in the file (or delete it) in the
+  commit that fixes it.
+
+Before starting work, read the open `*-issue.org` files — the problem you hit may already be known.
+
 ## Model first
 
 The approved model is [model/event-model.yaml](model/event-model.yaml); decisions D1–D13 are in

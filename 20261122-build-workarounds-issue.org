@@ -1,0 +1,49 @@
+#+TITLE: Build workarounds to remove once upstream is fixed
+#+DATE: 2026-11-22
+#+OPTIONS: toc:nil num:nil ^:nil
+
+Four problems in the toolchain were worked around, not solved. Each workaround is in the repo; remove it when the
+cause is fixed upstream. The ClojureDart REPL problem has its own file: [[file:20261122-repl-issue.org]].
+
+* 1. Flutter pinned to 3.47.9 (ClojureDart hangs with Flutter 3.50)
+
+- Symptom: =clojure -M:cljd compile= hangs forever after "Compiling cljd.core to Dart 3" with the system Flutter
+  3.50.1 (Dart 3.14). Its analyzer helper (=analyzer >=6.2.0 <7.0.0=) never answers its first request
+  (=lib dart:core=), even for an empty project folder.
+- Upstream: [[https://github.com/tensegritics/ClojureDart/issues/389][ClojureDart#389]] (open, "hanging after flutter
+  upgrade"; downgrading fixes it).
+- Workaround: Flutter 3.47.9 unpacked in =~/sdk/flutter-3.47.9=; every task in [[file:bb.edn]] puts it first on =PATH=
+  (=:init= → =flutter-bin=); =pubspec.yaml= has =sdk: ^3.13.0= and no =material_ui=.
+- Remove when: a ClojureDart release compiles with the current Flutter — then delete the pin from [[file:bb.edn]],
+  restore the SDK constraint and update [[file:README.md]] / [[file:AGENTS.md]].
+
+* 2. Release builds need a clean clone (test namespaces leak into lib/cljd-out)
+
+- Symptom: =flutter build apk --release= in the working folder fails: every file in =lib/cljd-out/= imports
+  =../../../test/cljd-out/auto-maintenance/model-test_test.dart= (and =odometer-test_test.dart=), which a release
+  build cannot resolve. Debug builds tolerate it. The imports appeared after =clojure -M:test:cljd test= had been run
+  in the working folder (before =bb test= moved to =target/test-copy=); ClojureDart's compiler state then keeps
+  injecting them.
+- Upstream: probably related to [[https://github.com/tensegritics/ClojureDart/issues/380][ClojureDart#380]] ("rename-lib
+  injects bogus imports when compiling test namespaces").
+- Workaround: =bb release= ([[file:bb.edn]]) clones HEAD into =target/release= and compiles there without the =:test=
+  alias. Note: it builds the *committed* state only.
+- Investigate: whether =clojure -M:cljd clean= in the working folder removes the leaked imports for good; a minimal
+  repro for #380.
+
+* 3. R8 missing classes from google_mlkit_text_recognition
+
+- Symptom: release build fails in R8: "Missing class com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions"
+  (and Devanagari, Japanese, Korean) referenced from the plugin's =TextRecognizer.initialize=.
+- Workaround: =-dontwarn= rules in [[file:android/app/proguard-rules.pro]], wired in
+  [[file:android/app/build.gradle.kts]]. This is the usual fix for this plugin and probably stays; it would only go
+  if the plugin stopped referencing optional scripts.
+
+* 4. Android lint crashes in image_picker_android on release builds
+
+- Symptom: =:image_picker_android:lintVitalAnalyzeRelease= fails with =NoSuchMethodError: JavaDocParser.parseDataItem=
+  inside the lint tool (AGP lint vs. the plugin's Java sources), not in our code.
+- Workaround: =lint { checkReleaseBuilds = false }= for the app ([[file:android/app/build.gradle.kts]]) and for all
+  Android library subprojects ([[file:android/build.gradle.kts]]).
+- Remove when: a newer Android Gradle Plugin / image_picker_android builds with release lint on; then delete both
+  blocks and check =bb release= again.
