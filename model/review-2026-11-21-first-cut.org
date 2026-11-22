@@ -4,7 +4,7 @@
 #+TODO: TODO COMMENTED | ACCEPTED REJECTED
 
 Model: [[file:event-model.yaml]] (24 slices, 13 event types). Diagram: [[file:event-model.svg]] (one car, left to
-right; the YAML is the full model).
+right, redrawn 2026-11-22 with issues, templates and costs; the YAML is the full model).
 
 *Approved 2026-11-21.* Nothing is implemented yet; implementation follows slice by slice (=es-slice=). Project setup
 (ClojureDart + Flutter skeleton) is the step after approval, not part of this review.
@@ -228,6 +228,7 @@ Every screen field traces back to an event attribute, and every event attribute 
 | cost, place, note, photos      | diary                 | maintenance/performed                        | maintenance/log               |
 | costs per year and category    | costs-by-year         | maintenance/performed cost, category, at     | maintenance/log               |
 | recognised vs confirmed km     | mileage               | odometer/recorded recognized_km, km          | recogniser + owner            |
+| open issues, message           | open-issues           | issue/reported, issue/withdrawn, fixes       | issue/*, maintenance/log      |
 | language, reminder settings    | settings              | settings/language-chosen, reminders-configured | settings/* commands         |
 | reminder already sent          | reminders-to-send     | reminder/sent level, due_km                  | reminder/send                 |
 
