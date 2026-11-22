@@ -9,6 +9,7 @@
     (def home (System/getProperty "user.home"))
     (def flutter-bin (str home "/sdk/flutter-3.47.9/bin"))
     (def android-home (str home "/Android/Sdk"))
+    (def adb (str android-home "/platform-tools/adb")) ; full path: bb resolves programs on its own PATH
     (def env {"PATH" (str flutter-bin ":" android-home "/platform-tools:" (System/getenv "PATH"))
               "ANDROID_HOME" android-home})
     (defn sh [& args] (apply shell {:extra-env env} args))
@@ -117,11 +118,11 @@
 
   install-release {:doc "Build the release APK and install it on the connected phone (keeps the app's data)"
                    :depends [release]
-                   :task (sh "adb install -r target/release/build/app/outputs/flutter-apk/app-release.apk")}
+                   :task (sh adb "install" "-r" "target/release/build/app/outputs/flutter-apk/app-release.apk")}
 
   install {:doc "Install the debug APK on the connected phone"
            :depends [apk]
-           :task (sh "adb install -r build/app/outputs/flutter-apk/app-debug.apk")}
+           :task (sh adb "install" "-r" "build/app/outputs/flutter-apk/app-debug.apk")}
 
   docs {:doc "Regenerate docs/slices.md (slices + implementation status) and the model diagram (svg, png)"
         :task (load-file "scripts/docs.clj")}
