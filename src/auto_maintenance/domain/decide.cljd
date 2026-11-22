@@ -2,7 +2,8 @@
   "Command handling: `state` is the fold of the stream's events (`evolve`), `decide` turns a command into events
   or rejects it with (ex-info msg {:category \"invalid\" | \"not-found\" | \"conflict\"}). Pure, no I/O."
   (:require [clojure.string :as str]
-            [auto-maintenance.domain.views :as v]))
+            [auto-maintenance.domain.views :as v]
+            [auto-maintenance.domain.receipt :as receipt]))
 
 ;; ------------------------------------------------------------------ state
 
@@ -208,20 +209,49 @@
 
 (def cost-categories #{"service" "repair" "tyres" "other"})
 
-(defn- decide-maintenance-log [state {:keys [car km items extra fixes cost category] :as cmd}]
+(defn money? [x] (and (string? x) (some? (re-matches #"\d+(\.\d{1,2})?" x))))
+
+(defn line-ok?
+  "A receipt line whose sum is quantity × price, to the cent (D17)."
+  [{:keys [qty price sum]}]
+  (and (number? qty) (pos? qty) (money? price) (money? sum)
+    (= (v/cents sum) (.round (* ^num qty (v/cents price))))))
+
+(defn- decide-maintenance-log [state {:keys [car km items extra fixes cost category parts labor] :as cmd}]
   (require-car state car)
-  (cond
-    (not (and (int? km) (pos? km))) (reject "invalid" "km must be a positive whole number")
-    (and (empty? items) (empty? (remove str/blank? extra)) (empty? fixes))
-    (reject "invalid" "nothing done: tick a job, describe the work or pick a fixed issue")
-    (not-every? #(get-in state [:items [car %] :active]) items)
-    (reject "invalid" "a job that is not in this car's schedule")
-    (not-every? #(let [{:keys [open] owner :car} (get-in state [:issues %])] (and open (= owner car))) fixes)
-    (reject "invalid" "only open issues of this car can be fixed")
-    (and cost (not (cost-categories category))) (reject "invalid" "a cost needs a category: service, repair, tyres or other"))
-  [(merge {:type :maintenance/performed}
-     (present (cond-> cmd extra (update :extra #(vec (remove str/blank? %))))
-       [:car :entry :at :km :items :extra :fixes :note :cost :currency :category :place :photos]))])
+  (let [lines (concat parts labor)
+        lines-total (when (seq lines) (reduce + (map (comp v/cents :sum) (filter line-ok? lines))))
+        cost (or cost (some-> lines-total v/money))]
+    (cond
+      (not (and (int? km) (pos? km))) (reject "invalid" "km must be a positive whole number")
+      (and (empty? items) (empty? (remove str/blank? extra)) (empty? fixes) (empty? lines))
+      (reject "invalid" "nothing done: tick a job, describe the work, pick a fixed issue or add receipt lines")
+      (not-every? #(get-in state [:items [car %] :active]) items)
+      (reject "invalid" "a job that is not in this car's schedule")
+      (not-every? #(let [{:keys [open] owner :car} (get-in state [:issues %])] (and open (= owner car))) fixes)
+      (reject "invalid" "only open issues of this car can be fixed")
+      (not-every? line-ok? lines)
+      (reject "invalid" (str "a receipt line whose sum is not quantity × price: "
+                          (:name (first (remove line-ok? lines)))))
+      (and lines-total (not= lines-total (v/cents cost)))
+      (reject "invalid" (str "the cost " cost " is not the sum of the lines " (v/money lines-total)))
+      (and cost (not (cost-categories category))) (reject "invalid" "a cost needs a category: service, repair, tyres or other"))
+    [(merge {:type :maintenance/performed}
+       (present (cond-> (assoc cmd :cost cost) extra (update :extra #(vec (remove str/blank? %))))
+         [:car :entry :at :km :items :extra :fixes :parts :labor :note :cost :currency :category :place :order_no
+          :photos :source]))]))
+
+(defn- decide-maintenance-import-receipt [state {:keys [car entry items fixes category photos] :as cmd}]
+  (let [{:keys [at km place order_no currency parts labor total]} (receipt/parse (:receipt cmd))
+        lines (concat parts labor)]
+    (when (empty? lines) (reject "invalid" "the receipt has no lines"))
+    (when (and (every? line-ok? lines) (not= (v/cents total) (reduce + (map (comp v/cents :sum) lines))))
+      (reject "invalid" (str "the receipt total " total " is not the sum of its lines — check the transcription")))
+    (decide-maintenance-log state
+      (into {} (filter (comp some? val))
+        {:car car :entry entry :at at :km km :items (or items []) :extra [] :fixes fixes
+         :parts parts :labor labor :cost total :currency currency :category category :place place
+         :order_no order_no :photos photos :source "receipt"}))))
 
 (defn- decide-maintenance-void [state {:keys [car entry reason] :as cmd}]
   (let [e (get-in state [:entries entry])]
@@ -245,6 +275,7 @@
     :issue/report (decide-issue-report state command)
     :issue/withdraw (decide-issue-withdraw state command)
     :maintenance/log (decide-maintenance-log state command)
+    :maintenance/import-receipt (decide-maintenance-import-receipt state command)
     :maintenance/void (decide-maintenance-void state command)
     (reject "invalid" (str "unknown command " (:type command)))))
 

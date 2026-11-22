@@ -38,6 +38,9 @@ glossary:
   schedule template: a ready list of schedule items for one kind of car (make, model, years, engine), shipped with the
     app as data; applying it defines the items in one step (D8); an add-on template (LPG system) adds the items of
     extra equipment to any car that has it
+  receipt lines: the parts and labour of a garage receipt on a diary entry — name, quantity, unit, price, sum (D17)
+  receipt import: a receipt transcribed by an AI agent into the JSON format of docs/receipt-format.md and pasted
+    into the app (D18)
   cost category: what money on a diary entry was spent for — service | repair | tyres | other (D12)
 
 slices:
@@ -373,7 +376,9 @@ slices:
     # history before the app (D6): an entry may have a lower km than the current reading; a new reading may not.
     # A cost needs a category (D12); an entry without a cost needs none.
     # `fixes` lists the open issues (D14) this visit fixed; they leave the issue list. An entry must do something:
-    # scheduled items, free-text work or fixes.
+    # scheduled items, free-text work, fixes or receipt lines.
+    # `parts` / `labor` are the receipt lines (D17): each sum must be quantity × price (to the cent) and `cost` the sum
+    # of all lines. Money is a decimal string, quantity a number.
     command: maintenance/log
     events: [maintenance/performed]
     gwt:
@@ -407,6 +412,29 @@ slices:
                extra: ["winter tyres on, balancing"], cost: "1200.00", currency: UAH, category: tyres}
         then: [{type: maintenance/performed, car: transit, entry: M-0006, at: "2026-11-05", km: 214000, items: [],
                 extra: ["winter tyres on, balancing"], cost: "1200.00", currency: UAH, category: tyres}]
+      - name: a garage visit with parts and labour lines
+        given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
+        when: {type: maintenance/log, car: transit, entry: M-0012, at: "2026-11-17", km: 248300, items: [], extra: [],
+               parts: [{name: "Wheel bearing", qty: 1, unit: pcs, price: "1600.00", sum: "1600.00"}],
+               labor: [{name: "Replace the wheel bearing", qty: 0.5, unit: h, price: "1700.00", sum: "850.00"}],
+               cost: "2450.00", currency: UAH, category: repair, place: "Service centre", order_no: "1234"}
+        then: [{type: maintenance/performed, car: transit, entry: M-0012, at: "2026-11-17", km: 248300, items: [],
+                extra: [],
+                parts: [{name: "Wheel bearing", qty: 1, unit: pcs, price: "1600.00", sum: "1600.00"}],
+                labor: [{name: "Replace the wheel bearing", qty: 0.5, unit: h, price: "1700.00", sum: "850.00"}],
+                cost: "2450.00", currency: UAH, category: repair, place: "Service centre", order_no: "1234"}]
+      - name: a line whose sum is not quantity × price
+        given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
+        when: {type: maintenance/log, car: transit, entry: M-0013, at: "2026-11-17", km: 248300, items: [], extra: [],
+               parts: [{name: "Transmission oil", qty: 2.3, unit: l, price: "850.00", sum: "1995.00"}],
+               cost: "1995.00", currency: UAH, category: repair}
+        then_error: invalid
+      - name: a cost that is not the sum of the lines
+        given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
+        when: {type: maintenance/log, car: transit, entry: M-0014, at: "2026-11-17", km: 248300, items: [], extra: [],
+               parts: [{name: "Transmission oil", qty: 2.3, unit: l, price: "850.00", sum: "1955.00"}],
+               cost: "2000.00", currency: UAH, category: repair}
+        then_error: invalid
       - name: a cost without a category, or an unknown category
         given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
         when: {type: maintenance/log, car: transit, entry: M-0007, at: "2026-11-05", km: 214000, items: [],
@@ -435,6 +463,48 @@ slices:
                 {type: schedule/item-retired, car: transit, item: dpf-cleaning, reason: x}]
         when: {type: maintenance/log, car: transit, entry: M-0005, at: "2026-11-12", km: 214300,
                items: [dpf-cleaning], extra: []}
+        then_error: invalid
+
+  - id: import-receipt
+    type: translation
+    screen: log-entry
+    # Adapter: the owner gives any AI agent the photo of a garage receipt and the prompt the app copies
+    # (docs/receipt-format.md), and pastes the agent's JSON answer into Log work (D18). The JSON becomes a diary entry
+    # with its parts and labour lines; the owner still ticks the scheduled jobs and fixed issues it covers and picks
+    # the category. The same checks as typed lines apply (D17); `total` must match the lines.
+    command: maintenance/import-receipt
+    events: [maintenance/performed]
+    gwt:
+      - name: a receipt with parts and labour becomes one diary entry
+        given: [{type: schedule/item-defined, car: transit, item: transmission-oil, title: "Transmission oil",
+                 every_km: 60000}]
+        when: {type: maintenance/import-receipt, car: transit, entry: M-0020, items: [transmission-oil], fixes: [],
+               category: repair, photos: ["photos/transit/2026-11-17-M-0020.jpg"],
+               receipt: '{"date": "2026-11-17", "km": 248300, "place": "Service centre", "order_no": "1234",
+                          "currency": "UAH",
+                          "parts": [{"name": "Transmission oil 75W-80", "qty": 2.3, "unit": "l", "price": 850.00,
+                                     "sum": 1955.00}],
+                          "labor": [{"name": "Remove and refit the underbody shield", "qty": 0.2, "unit": "h",
+                                     "price": 1700.00, "sum": 340.00}],
+                          "total": 2295.00}'}
+        then: [{type: maintenance/performed, car: transit, entry: M-0020, at: "2026-11-17", km: 248300,
+                items: [transmission-oil], extra: [], fixes: [],
+                parts: [{name: "Transmission oil 75W-80", qty: 2.3, unit: l, price: "850.00", sum: "1955.00"}],
+                labor: [{name: "Remove and refit the underbody shield", qty: 0.2, unit: h, price: "1700.00",
+                         sum: "340.00"}],
+                cost: "2295.00", currency: UAH, category: repair, place: "Service centre", order_no: "1234",
+                photos: ["photos/transit/2026-11-17-M-0020.jpg"], source: receipt}]
+      - name: a total that does not match the lines (transcription error)
+        given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
+        when: {type: maintenance/import-receipt, car: transit, entry: M-0021, items: [], fixes: [], category: repair,
+               receipt: '{"date": "2026-11-17", "km": 248300, "currency": "UAH",
+                          "parts": [{"name": "Wheel bearing", "qty": 1, "unit": "pcs", "price": 1600.00, "sum": 1600.00}],
+                          "labor": [], "total": 1700.00}'}
+        then_error: invalid
+      - name: text that is not a receipt in the format
+        given: [{type: car/registered, car: transit, name: x, plate: "KA5678BI"}]
+        when: {type: maintenance/import-receipt, car: transit, entry: M-0022, items: [], fixes: [], category: repair,
+               receipt: "Here is your receipt: oil 2.3 l, 1955 UAH"}
         then_error: invalid
 
   - id: void-maintenance
@@ -475,11 +545,23 @@ slices:
                                         cost: "2850.00", currency: UAH},
                                        {entry: M-0001, at: "2026-03-01", km: 205000, titles: ["Engine oil"]}]}
 
+      - name: receipt lines and the order number are shown with the entry
+        given:
+          - {type: maintenance/performed, car: transit, entry: M-0012, at: "2026-11-17", km: 248300, items: [],
+             extra: [], parts: [{name: "Wheel bearing", qty: 1, unit: pcs, price: "1600.00", sum: "1600.00"}],
+             labor: [{name: "Replace the wheel bearing", qty: 0.5, unit: h, price: "1700.00", sum: "850.00"}],
+             cost: "2450.00", currency: UAH, category: repair, order_no: "1234"}
+        then: {entries: [{entry: M-0012, order_no: "1234",
+                          parts: [{name: "Wheel bearing", qty: 1, unit: pcs, price: "1600.00", sum: "1600.00"}],
+                          labor: [{name: "Replace the wheel bearing", qty: 0.5, unit: h, price: "1700.00",
+                                   sum: "850.00"}]}]}
+
   - id: costs-by-year
     type: state-view
     screen: costs
     # Money spent per car, year and category, from diary entries with a cost; voided entries do not count. Totals are
     # per currency (no conversion). Fuel is not here: fuel receipts / bank import are a later phase (D12).
+    # Entries with receipt lines also add to by_kind (parts / labor, D19); the rest of their cost counts as "other".
     read_model: costs-by-year
     events: [maintenance/performed, maintenance/voided]
     gt:
@@ -500,6 +582,17 @@ slices:
                                       by_category: {service: "2850.00", repair: "6400.00", tyres: "1200.00"}},
                                      {year: 2025, currency: UAH, total: "2500.00",
                                       by_category: {service: "2500.00"}}]}
+
+      - name: parts and labour per year from receipt lines
+        given:
+          - {type: maintenance/performed, car: transit, entry: M-0012, at: "2026-11-17", km: 248300, items: [],
+             extra: [], parts: [{name: "Wheel bearing", qty: 1, unit: pcs, price: "1600.00", sum: "1600.00"}],
+             labor: [{name: "Replace the wheel bearing", qty: 0.5, unit: h, price: "1700.00", sum: "850.00"}],
+             cost: "2450.00", currency: UAH, category: repair}
+          - {type: maintenance/performed, car: transit, entry: M-0006, at: "2026-11-05", km: 248000, items: [],
+             extra: [x], cost: "1200.00", currency: UAH, category: tyres}
+        then: {years: [{year: 2026, currency: UAH, total: "3650.00",
+                        by_kind: {parts: "1600.00", labor: "850.00", other: "1200.00"}}]}
 
   # ---------------------------------------------------------------- issues (things to fix, D14)
   - id: report-issue

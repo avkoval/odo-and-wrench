@@ -3,7 +3,7 @@
 #+OPTIONS: toc:nil num:nil ^:nil
 #+TODO: TODO COMMENTED | ACCEPTED REJECTED
 
-Model: [[file:event-model.yaml]] (24 slices, 13 event types). Diagram: [[file:event-model.svg]] (one car, left to
+Model: [[file:event-model.yaml]] (25 slices, 13 event types). Diagram: [[file:event-model.svg]] (one car, left to
 right, redrawn 2026-11-22 with issues, templates and costs; the YAML is the full model).
 
 *Approved 2026-11-21.* Nothing is implemented yet; implementation follows slice by slice (=es-slice=). Project setup
@@ -37,6 +37,13 @@ From Oleksii, after adding the Forester on the phone: things that break (left tu
 as a to-do list per car, copied as one message to the mechanic, and closed when a visit fixed them. New slices
 =report-issue=, =withdraw-issue=, =open-issues=; =log-maintenance= gets =fixes=. Decisions D14–D16 accepted 2026-11-22;
 slices already implemented are not affected.
+
+* Changes after the fourth round (2026-11-22): garage receipts
+
+From Oleksii, with a real garage receipt (наряд-замовлення): it has two tables, parts and labour, each line with
+name, quantity, unit, price and sum; record them as they are, and paste a transcription made by an AI agent instead
+of typing; photos also from the gallery. New slice =import-receipt=; =log-maintenance=, =diary= and =costs-by-year=
+get scenarios for the lines. Decisions D17–D20 accepted 2026-11-22.
 
 * What the app does, in one paragraph
 
@@ -208,6 +215,42 @@ D3) → confirm (D2), with typing the number as the fallback. Proposed order of 
 2. [@2]  =log-maintenance= (with =fixes=), =void-maintenance=, =diary=.
 3. [@3]  =report-issue=, =withdraw-issue=, =open-issues= with Share / Copy (after this review).
 4. [@4]  =change-/retire-schedule-item=, settings, reminders, costs; VIN photo and templates last.
+
+** ACCEPTED D17 Receipt lines on a diary entry: parts and labour, checked
+CLOSED: [2026-11-22 Sun]
+- =maintenance/log= takes =parts= and =labor=: lists of ={name, qty, unit, price, sum}= as on the receipt, plus
+  =order_no=. Quantity is a number (2.3 l, 0.5 h), money a decimal string ("1600.00").
+- Checks: each =sum= = =qty= × =price= to the cent, and the entry's =cost= = the sum of all lines (=invalid=
+  otherwise) — this is what catches typing and transcription mistakes. Lines without a price are left out.
+- Lines do not replace the scheduled-job ticks: the owner still ticks "Transmission oil" so its due point restarts.
+  Matching lines to jobs automatically is not modelled (names vary per garage).
+- Typing lines by hand is possible but clumsy on a phone; the main way in is D18.
+
+** ACCEPTED D18 Receipt import: AI transcription pasted as JSON
+CLOSED: [2026-11-22 Sun]
+- Format: [[file:../docs/receipt-format.md]] — one JSON object (=date=, =km=, =place=, =order_no=, =currency=,
+  =parts=, =labor=, =total=) plus a ready prompt. Any AI chat (Claude, ChatGPT, Gemini) gets the photo and the
+  prompt; the owner pastes the answer into /Log work → Paste receipt/; a /Copy prompt/ button puts the prompt into
+  the clipboard.
+- Why JSON (not YAML, Markdown or EDN): every model writes it reliably; Dart parses it with no extra package; it is
+  strict, so a broken paste is rejected instead of half-read (YAML would turn some values into dates or booleans).
+- =maintenance/import-receipt= (translation slice) parses the text, applies the D17 checks and the =total= check, and
+  records =maintenance/performed= with =source: receipt=. Before saving, the screen shows the parsed lines; the owner
+  ticks jobs and fixed issues and picks the category.
+- The prompt asks the agent to leave out personal data (customer name, phone, VIN, plate, mechanic names).
+- Later: the app could call an AI API itself with the photo (needs network, an API key and a privacy decision);
+  not now.
+
+** ACCEPTED D19 Costs per year also split into parts and labour
+CLOSED: [2026-11-22 Sun]
+=costs-by-year= adds =by_kind= ={parts, labor, other}= per year: sums of the receipt lines; the rest of the costs
+(entries without lines) count as =other=. The per-category totals stay as they are.
+
+** ACCEPTED D20 Every photo button offers Camera or Gallery
+CLOSED: [2026-11-22 Sun]
+Receipt, odometer, defect and VIN photos can be taken now or picked from the gallery (a receipt photographed earlier,
+a screenshot of a PDF invoice). Adapter change only — events keep the photo path as before. Odometer and VIN text
+recognition run on gallery photos too.
 
 * Open questions
 

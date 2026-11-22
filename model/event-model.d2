@@ -1,6 +1,6 @@
 title: |md
   # auto-maintenance: one car, left to right
-  24 slices — model/event-model.yaml is the full model
+  25 slices — model/event-model.yaml is the full model
 | {near: top-center}
 
 model: {
@@ -15,7 +15,7 @@ model: {
   s_sched: "Schedule\npick template (+ LPG), edit" {style.fill: "#FFFFFF"; shape: page}
   s_cap: "Odometer\nphoto → confirm km" {style.fill: "#FFFFFF"; shape: page}
   s_issue: "To fix\nadd / withdraw" {style.fill: "#FFFFFF"; shape: page}
-  s_log: "Log entry\njobs + fixes + cost" {style.fill: "#FFFFFF"; shape: page}
+  s_log: "Log work\njobs, fixes, parts + labour,\npaste receipt JSON" {style.fill: "#FFFFFF"; shape: page}
   s_car: "Car\nwhat is due" {style.fill: "#FFFFFF"; shape: page}
   s_share: "Share / Copy\nlist for the mechanic" {style.fill: "#FFFFFF"; shape: page}
   s_diary: "Diary / Costs\nhistory, per year" {style.fill: "#FFFFFF"; shape: page}
@@ -27,7 +27,7 @@ model: {
   x_tpl: "Template catalogue\n(app data)" {style.fill: "#FFF59D"}
   x_ocr: "Camera +\nML Kit text recognition" {style.fill: "#FFF59D"}
   g1: "" {style.opacity: 0}
-  g2: "" {style.opacity: 0}
+  x_ai: "AI agent\nreceipt photo → JSON" {style.fill: "#FFF59D"}
   g3: "" {style.opacity: 0}
   x_share: "Android share sheet\n/ clipboard" {style.fill: "#FFF59D"}
   g4: "" {style.opacity: 0}
@@ -39,10 +39,10 @@ model: {
   c_def: "schedule/apply-template\ndefine / change / retire" {style.fill: "#A7C7E7"}
   c_odo: "odometer/record\n(km + recognized_km)" {style.fill: "#A7C7E7"}
   c_issue: "issue/report\nissue/withdraw" {style.fill: "#A7C7E7"}
-  c_log: "maintenance/log\n(items, fixes, cost)" {style.fill: "#A7C7E7"}
+  c_log: "maintenance/log\nmaintenance/import-receipt" {style.fill: "#A7C7E7"}
   rm_due: "due-list, mileage\ngarage" {style.fill: "#C5E8A0"}
   rm_issues: "open-issues\n(+ message)" {style.fill: "#C5E8A0"}
-  rm_diary: "diary\ncosts-by-year" {style.fill: "#C5E8A0"}
+  rm_diary: "diary\ncosts-by-year (parts/labour)" {style.fill: "#C5E8A0"}
   c_set: "settings/choose-language\nconfigure-reminders" {style.fill: "#A7C7E7"}
   rm_rem: "reminders-to-send\n→ reminder/send" {style.fill: "#C5E8A0"}
 
@@ -51,7 +51,7 @@ model: {
   e_def: "schedule/item-defined" {style.fill: "#F5A65B"}
   e_odo: "odometer/recorded\nO-0001 129 400" {style.fill: "#F5A65B"}
   e_issue: "issue/reported\nI-0001" {style.fill: "#F5A65B"}
-  e_log: "maintenance/performed\nM-0010 fixes I-0001" {style.fill: "#F5A65B"}
+  e_log: "maintenance/performed\nparts, labor, fixes" {style.fill: "#F5A65B"}
   g6: "" {style.opacity: 0}
   g7: "" {style.opacity: 0}
   g8: "" {style.opacity: 0}
@@ -82,6 +82,8 @@ model.x_ocr -> model.c_odo: km guess, confirmed
 model.c_odo -> model.e_odo
 model.s_issue -> model.c_issue
 model.c_issue -> model.e_issue
+model.s_log -> model.x_ai: copy prompt
+model.x_ai -> model.c_log: pasted JSON
 model.s_log -> model.c_log
 model.c_log -> model.e_log
 model.e_odo -> model.rm_due

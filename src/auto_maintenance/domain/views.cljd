@@ -173,7 +173,8 @@
                 reverse
                 (mapv (fn [{:keys [items fixes] :as e}]
                         (into {} (filter (comp some? val))
-                          (assoc (select-keys e [:entry :at :km :extra :note :cost :currency :category :place :photos])
+                          (assoc (select-keys e [:entry :at :km :extra :parts :labor :order_no :note :cost :currency :category
+                                                 :place :photos :source])
                             :titles (mapv #(get titles % %) items)
                             :fixed (when (seq fixes) (mapv #(get issues % %) fixes)))))))}))
 
@@ -196,4 +197,10 @@
                    {:year year :currency currency
                     :total (money (reduce + (map (comp cents :cost) es)))
                     :by_category (into {} (for [[cat ces] (group-by :category es)]
-                                            [cat (money (reduce + (map (comp cents :cost) ces)))]))}))}))
+                                            [cat (money (reduce + (map (comp cents :cost) ces)))]))
+                    :by_kind (let [sum-of (fn [k] (reduce + (for [e es, l (get e k)] (cents (:sum l)))))
+                                   parts (sum-of :parts)
+                                   labor (sum-of :labor)
+                                   other (- (reduce + (map (comp cents :cost) es)) parts labor)]
+                               (into {} (for [[k c] [["parts" parts] ["labor" labor] ["other" other]] :when (pos? c)]
+                                          [k (money c)])))}))}))

@@ -8,7 +8,8 @@
             [auto-maintenance.app :as app]
             [auto-maintenance.photos :as photos]
             [auto-maintenance.domain.dates :as dates]
-            [auto-maintenance.domain.odometer :as odometer]))
+            [auto-maintenance.domain.odometer :as odometer]
+            [auto-maintenance.domain.receipt :as receipt]))
 
 ;; ------------------------------------------------------------------ helpers
 
@@ -34,6 +35,23 @@
 (defn push! [ctx page]
   (.push (m/Navigator.of ctx) (#/(m/MaterialPageRoute Object) .builder (fn [_] page)))
   nil)
+
+(defn photo!
+  "Asks Camera or Gallery (D20), then returns the picked photo's temporary path, or nil."
+  [ctx]
+  (let [choice (await (m/showModalBottomSheet
+                        .context ctx
+                        .builder (fn [bctx]
+                                   (m/SafeArea
+                                     .child (m/Column
+                                              .mainAxisSize m/MainAxisSize.min
+                                              .children [(m/ListTile .leading (m/Icon m/Icons.photo_camera)
+                                                           .title (m/Text "Camera")
+                                                           .onTap #(.pop (m/Navigator.of bctx) "camera"))
+                                                         (m/ListTile .leading (m/Icon m/Icons.photo_library)
+                                                           .title (m/Text "Gallery")
+                                                           .onTap #(.pop (m/Navigator.of bctx) "gallery"))])))))]
+    (when choice (await (photos/pick-photo! (= "camera" choice))))))
 
 (defn submit!
   "Runs the command; on success closes the page, on rejection shows why."
@@ -116,7 +134,7 @@
     (remove nil?
       [(m/FilledButton.icon
          .onPressed (fn []
-                      (when-some [path (await (photos/take-photo!))]
+                      (when-some [path (await (photo! ctx))]
                         (swap! !shot assoc :photo path :busy true)
                         (let [last-km (:km (app/mileage @app/!events car-id))
                               found (odometer/candidates (await (photos/recognize-lines path)) last-km)]
@@ -218,7 +236,7 @@
     (remove nil?
       [(field text "What is broken, e.g. Left turn signal")
        (m/OutlinedButton.icon
-         .onPressed (fn [] (when-some [p (await (photos/take-photo!))] (reset! !photo p)) nil)
+         .onPressed (fn [] (when-some [p (await (photo! ctx))] (reset! !photo p)) nil)
          .icon (m/Icon m/Icons.photo_camera)
          .label (m/Text (if photo "Another photo" "Photo (optional)")))
        (when photo
@@ -291,6 +309,65 @@
 
 (def categories ["service" "repair" "tyres" "other"])
 
+(defn paste-receipt-dialog
+  "D18: paste the JSON an AI agent made from the receipt photo; returns the parsed receipt plus its text, or nil."
+  [ctx]
+  (m/showDialog
+    .context ctx
+    .builder (f/build
+               :context dctx
+               :managed [text (m/TextEditingController)]
+               (m/AlertDialog
+                 .title (m/Text "Paste receipt")
+                 .content (m/SizedBox
+                            .width 600.0
+                            .child (m/Column
+                                     .mainAxisSize m/MainAxisSize.min
+                                     .children [(m/Text "Give an AI chat the receipt photo and the prompt (Copy prompt), then paste its JSON answer here.")
+                                                (m/SizedBox .height 8.0)
+                                                (m/TextField .controller text .maxLines 8 .minLines 4
+                                                  .decoration (m/InputDecoration .hintText "{\"date\": …}"
+                                                                .border (m/OutlineInputBorder)))]))
+                 .actions [(m/TextButton
+                             .onPressed (fn []
+                                          (await (svc/Clipboard.setData (svc/ClipboardData .text receipt/prompt)))
+                                          (.showSnackBar (m/ScaffoldMessenger.of ctx)
+                                            (m/SnackBar .content (m/Text "Prompt copied — paste it into an AI chat with the receipt photo")))
+                                          nil)
+                             .child (m/Text "Copy prompt"))
+                           (m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text "Cancel"))
+                           (m/FilledButton
+                             .onPressed (fn []
+                                          (try
+                                            (let [parsed (receipt/parse (.-text text))]
+                                              (.pop (m/Navigator.of dctx) (assoc parsed :text (.-text text))))
+                                            (catch cljd.core/ExceptionInfo e
+                                              (show-error ctx {:message (ex-message e)})))
+                                          nil)
+                             .child (m/Text "Use"))]))))
+
+(defn receipt-card
+  "The pasted receipt as it will be saved: its lines and totals."
+  [{:keys [at km place order_no parts labor total currency]}]
+  (m/Card
+    .child (m/Padding
+             .padding (m/EdgeInsets.all 12.0)
+             .child (m/Column
+                      .crossAxisAlignment m/CrossAxisAlignment.start
+                      .children (concat
+                                  [(m/Text (str "Receipt " (or order_no "") " · " at " · " km " km · " (or place ""))
+                                     .style (m/TextStyle .fontWeight m/FontWeight.bold))]
+                                  (for [[label ls] [["Parts" parts] ["Labour" labor]] :when (seq ls)]
+                                    (m/Column
+                                      .crossAxisAlignment m/CrossAxisAlignment.start
+                                      .children (cons (m/Padding .padding (m/EdgeInsets.only .top 6.0)
+                                                        .child (m/Text label .style (m/TextStyle .fontStyle m/FontStyle.italic)))
+                                                  (for [{:keys [name qty unit price sum]} ls]
+                                                    (m/Text (str name " — " qty " " unit " × " price " = " sum))))))
+                                  [(m/Padding .padding (m/EdgeInsets.only .top 6.0)
+                                     .child (m/Text (str "Total " total " " currency)
+                                              .style (m/TextStyle .fontWeight m/FontWeight.bold)))])))))
+
 (defn log-entry-page
   "log-maintenance: one visit — scheduled jobs, free-text work, fixed issues, cost. Past work can be entered too;
   `item` pre-ticks one job (\"when was it last done?\")."
@@ -301,22 +378,33 @@
           jobs (app/schedule events car-id)
           open (:issues (app/open-issues events car-id))
           current-km (:km (app/mileage events car-id))]
-    :managed [!form (atom {:items (if item #{item} #{}) :fixes #{} :category "service" :photo nil}) :dispose nil
+    :managed [!form (atom {:items (if item #{item} #{}) :fixes #{} :category "service" :photo nil :receipt nil})
+              :dispose nil
               at (m/TextEditingController .text (dates/today))
               km (m/TextEditingController .text (str (or current-km "")))
               extra (m/TextEditingController)
               note (m/TextEditingController)
               cost (m/TextEditingController)
               place (m/TextEditingController)]
-    :watch [{:keys [items fixes category photo]} !form]
+    :watch [{:keys [items fixes category photo receipt]} !form]
     (m/Scaffold
       .appBar (m/AppBar .title (m/Text "Log work")))
     .body
     (m/ListView .padding (m/EdgeInsets.all 16.0))
     .children
     (concat
-      [(field at "Date (YYYY-MM-DD)")
-       (field km "km" m/TextInputType.number)]
+      [(m/OutlinedButton.icon
+         .onPressed (fn []
+                      (when-some [r (await (paste-receipt-dialog ctx))]
+                        (swap! !form assoc :receipt r :category "repair"))
+                      nil)
+         .icon (m/Icon m/Icons.content_paste)
+         .label (m/Text (if receipt "Paste another receipt" "Paste receipt (JSON from an AI chat)")))]
+      (if receipt
+        [(receipt-card receipt)
+         (m/TextButton .onPressed #(do (swap! !form assoc :receipt nil) nil) .child (m/Text "Remove the receipt"))]
+        [(field at "Date (YYYY-MM-DD)")
+         (field km "km" m/TextInputType.number)])
       (when (seq jobs)
         (cons (m/Padding .padding (m/EdgeInsets.only .top 8.0) .child (m/Text "Scheduled jobs done"))
           (for [{:keys [item title]} jobs]
@@ -336,25 +424,34 @@
       [(m/TextField .controller extra .maxLines nil .minLines 2
          .decoration (m/InputDecoration .labelText "Other work, one per line" .border (m/OutlineInputBorder)))
        (field note "Note, e.g. Castrol 5W-30, 6.2 l")
-       (m/Row .children [(m/Expanded .child (field cost "Cost, UAH" m/TextInputType.number))
+       (m/Row .children [(m/Expanded .child (if receipt
+                                              (m/Text (str "Cost " (:total receipt) " " (:currency receipt) " (from the receipt)"))
+                                              (field cost "Cost, UAH" m/TextInputType.number)))
                          (m/SizedBox .width 12.0)
                          (m/DropdownButton
                            .value category
                            .items (for [c categories] (m/DropdownMenuItem .value c .child (m/Text c)))
                            .onChanged (fn [v] (swap! !form assoc :category v) nil))])
-       (field place "Garage / place")
+       (if receipt (m/SizedBox .height 0.0) (field place "Garage / place"))
        (m/OutlinedButton.icon
-         .onPressed (fn [] (when-some [p (await (photos/take-photo!))] (swap! !form assoc :photo p)) nil)
+         .onPressed (fn [] (when-some [p (await (photo! ctx))] (swap! !form assoc :photo p)) nil)
          .icon (m/Icon m/Icons.receipt_long)
          .label (m/Text (if photo "Another receipt photo" "Receipt photo (optional)")))
        (m/FilledButton
          .onPressed (fn []
                       (let [events @app/!events
                             entry (app/next-id events :entry "M")
-                            date (text-of at)
-                            cost-text (blank->nil (text-of cost))]
+                            date (or (:at receipt) (text-of at))
+                            cost-text (blank->nil (text-of cost))
+                            photos (when photo [(await (photos/keep! photo car-id (str date "-" entry ".jpg")))])]
                         (submit! ctx (into {} (filter (comp some? val))
-                                       {:type :maintenance/log :car car-id :entry entry :at date :km (int-of km)
+                                       (if receipt
+                                         {:type :maintenance/import-receipt :car car-id :entry entry
+                                          :receipt (:text receipt)
+                                          :items (vec (filter items (map :item jobs)))
+                                          :fixes (when (seq fixes) (vec (filter fixes (map :issue open))))
+                                          :category category :photos photos}
+                                         {:type :maintenance/log :car car-id :entry entry :at date :km (int-of km)
                                         :items (vec (filter items (map :item jobs)))
                                         :extra (vec (remove str/blank? (map str/trim (str/split-lines (.-text extra)))))
                                         :fixes (when (seq fixes) (vec (filter fixes (map :issue open))))
@@ -364,8 +461,7 @@
                                         :currency (when cost-text "UAH")
                                         :category (when cost-text category)
                                         :place (blank->nil (text-of place))
-                                        :photos (when photo
-                                                  [(await (photos/keep! photo car-id (str date "-" entry ".jpg")))])})))
+                                        :photos photos}))))
                       nil)
          .child (m/Text "Save"))])))
 
@@ -398,14 +494,22 @@
     .children
     (if (empty? years)
       [(m/ListTile .title (m/Text "No costs yet — add a cost when you log work"))]
-      (for [{:keys [year currency total by_category]} years]
+      (for [{:keys [year currency total by_category by_kind]} years]
         (m/ListTile
           .key (m/ValueKey (str year currency))
+          .isThreeLine true
           .title (m/Text (str year ": " total " " currency))
-          .subtitle (m/Text (str/join " · " (for [c categories :let [v (get by_category c)] :when v] (str c " " v)))))))))
+          .subtitle (m/Text (str (str/join " · " (for [c categories :let [v (get by_category c)] :when v] (str c " " v)))
+                              "\n"
+                              (str/join " · " (for [[k label] [["parts" "parts"] ["labor" "labour"] ["other" "other"]]
+                                                    :let [v (get by_kind k)] :when v]
+                                                (str label " " v))))))))))
 
-(defn entry-subtitle [{:keys [titles extra fixed note cost currency category place]}]
+(defn entry-subtitle [{:keys [titles extra fixed note cost currency category place parts labor order_no]}]
   (str/join "\n" (remove str/blank? [(str/join ", " (concat titles extra))
+                                      (when (or (seq parts) (seq labor))
+                                        (str (when order_no (str "receipt " order_no ": "))
+                                          (count parts) " parts, " (count labor) " labour lines — tap to see"))
                                       (when (seq fixed) (str "fixed: " (str/join ", " fixed)))
                                       (str/join " · " (remove nil? [(when cost (str cost " " currency " (" category ")"))
                                                                     place note]))])))
@@ -435,6 +539,15 @@
           .isThreeLine true
           .title (m/Text (str at "  ·  " km " km"))
           .subtitle (m/Text (entry-subtitle e))
+          .onTap (when (or (seq (:parts e)) (seq (:labor e)))
+                   #(do (m/showDialog .context ctx
+                          .builder (fn [_] (m/AlertDialog
+                                             .content (m/SingleChildScrollView
+                                                        .child (receipt-card {:at at :km km :place (:place e)
+                                                                              :order_no (:order_no e)
+                                                                              :parts (:parts e) :labor (:labor e)
+                                                                              :total (:cost e)
+                                                                              :currency (:currency e)}))))) nil))
           .onLongPress #(void-dialog ctx car-id e))))))
 
 ;; ------------------------------------------------------------------ edit schedule item

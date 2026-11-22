@@ -18,10 +18,11 @@
 
 (defn file-of-tmp [path] (io/File path))
 
-(defn take-photo!
-  "Opens the camera; returns the temporary path of the photo, or nil when cancelled."
-  []
-  (when-some [^ip/XFile x (await (.pickImage (ip/ImagePicker) .source ip/ImageSource.camera
+(defn pick-photo!
+  "Opens the camera (`camera?` true) or the gallery (D20); returns the temporary path, or nil when cancelled."
+  [camera?]
+  (when-some [^ip/XFile x (await (.pickImage (ip/ImagePicker)
+                                   .source (if camera? ip/ImageSource.camera ip/ImageSource.gallery)
                                    .maxWidth 2000.0 .imageQuality 85))]
     (.-path x)))
 

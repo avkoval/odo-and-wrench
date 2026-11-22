@@ -1,0 +1,31 @@
+(ns auto-maintenance.receipt-test
+  "A real-size garage receipt (12 lines, amounts as on a real one; names generic) through import-receipt."
+  (:require [cljd.test :refer [deftest is]]
+            [auto-maintenance.domain.decide :as d]))
+
+(def receipt-json
+  "{\"date\": \"2026-11-17\", \"km\": 248258, \"place\": \"Service centre\", \"order_no\": \"5419\", \"currency\": \"UAH\",
+    \"parts\": [{\"name\": \"Transmission oil 75W-80\", \"qty\": 2.3, \"unit\": \"l\", \"price\": 850.00, \"sum\": 1955.00},
+               {\"name\": \"Centre bearing\", \"qty\": 1, \"unit\": \"pcs\", \"price\": 1600.00, \"sum\": 1600.00},
+               {\"name\": \"CV joint boot\", \"qty\": 1, \"unit\": \"pcs\", \"price\": 2900.00, \"sum\": 2900.00},
+               {\"name\": \"Drive shaft seal\", \"qty\": 1, \"unit\": \"pcs\", \"price\": 1100.00, \"sum\": 1100.00},
+               {\"name\": \"Cleaning spray\", \"qty\": 0.5, \"unit\": \"pcs\", \"price\": 270.00, \"sum\": 135.00},
+               {\"name\": \"Brake light switch\", \"qty\": 1, \"unit\": \"pcs\", \"price\": 470.00, \"sum\": 470.00}],
+    \"labor\": [{\"name\": \"Remove and refit the shield\", \"qty\": 0.2, \"unit\": \"h\", \"price\": 1700.00, \"sum\": 340.00},
+               {\"name\": \"Replace CV boots\", \"qty\": 2, \"unit\": \"h\", \"price\": 1700.00, \"sum\": 3400.00},
+               {\"name\": \"Replace rear axle seal\", \"qty\": 0.3, \"unit\": \"h\", \"price\": 1700.00, \"sum\": 510.00},
+               {\"name\": \"Computer diagnostics\", \"qty\": 0.5, \"unit\": \"h\", \"price\": 1700.00, \"sum\": 850.00},
+               {\"name\": \"Wiring diagnostics\", \"qty\": 0.5, \"unit\": \"h\", \"price\": 1700.00, \"sum\": 850.00},
+               {\"name\": \"Replace clutch pedal switch\", \"qty\": 0.4, \"unit\": \"h\", \"price\": 1700.00, \"sum\": 680.00}],
+    \"total\": 14790.00}")
+
+(deftest twelve-line-receipt
+  (let [[e] (d/handle [{:type :car/registered :car "transit" :name "Ford Transit" :plate "KA5678BI"}]
+              {:type :maintenance/import-receipt :car "transit" :entry "M-0001" :items [] :fixes []
+               :category "repair" :receipt receipt-json})]
+    (is (= "14790.00" (:cost e)))
+    (is (= 6 (count (:parts e))))
+    (is (= 6 (count (:labor e))))
+    (is (= "135.00" (:sum (nth (:parts e) 4))))
+    (is (= 248258 (:km e)))
+    (is (= "receipt" (:source e)))))

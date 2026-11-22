@@ -64,7 +64,7 @@ done, or to **stop tracking** it (it leaves the list; its history stays in the d
 
 ## Odometer reading from a photo
 
-Car → **gauge** → **Photo of the odometer**. The phone reads the number (on the device, no internet needed) and fills
+Car → **gauge** → **Photo of the odometer** → **Camera** or **Gallery** (a photo taken earlier works too). The phone reads the number (on the device, no internet needed) and fills
 the km field; other numbers it found are shown as chips — tap the right one if needed. Check the number and **Save**.
 You can also type the km without a photo.
 
@@ -82,9 +82,26 @@ Car → **wrench** (or Diary → **Log work**). One entry per visit or job:
 - **Scheduled jobs done** — tick them; their due points restart from this entry.
 - **Issues fixed** — tick the defects this visit fixed; they leave the To-fix list.
 - **Other work**, one item per line (e.g. *winter tyres on*), **note** (oil brand, litres), **cost** in UAH with a
-  **category** (service, repair, tyres, other), **garage**, **receipt photo**.
+  **category** (service, repair, tyres, other), **garage**, **receipt photo** (camera or gallery).
 
-An entry must contain at least one job, one line of other work or one fixed issue; a cost needs a category.
+An entry must contain at least one job, one line of other work, one fixed issue or receipt lines; a cost needs a
+category.
+
+### Garage receipt: paste instead of typing
+
+A garage receipt (наряд-замовлення) lists **parts** and **labour**, each line with quantity, unit, price and sum.
+To get it into the diary without typing:
+
+1. Log work → **Paste receipt** → **Copy prompt** (the prompt goes to the clipboard).
+2. In any AI chat (Claude, ChatGPT, Gemini …) paste the prompt and attach the receipt photo; copy the JSON answer.
+3. Back in the app: paste it into the field → **Use**. The receipt appears as a card with its lines and total.
+4. Tick the scheduled jobs it covered (e.g. *Transmission oil*) and the issues it fixed, check the category
+   (*repair* is preset), optionally add the receipt photo → **Save**.
+
+The app checks the arithmetic: every sum must be quantity × price and the total must be the sum of all lines — a
+mismatch is reported (usually a transcription mistake: compare with the paper). The format and the prompt are in
+[receipt-format.md](receipt-format.md). In the **Diary** such an entry says how many lines it has; tap it to see them.
+**Costs** shows each year also split into parts, labour and other.
 
 **Diary** (clock icon) lists the entries, newest first. **Long-press** an entry logged by mistake to void it with a
 reason; jobs fall back to their previous due point and issues it fixed are open again. **Costs** (card icon in the
@@ -92,7 +109,7 @@ diary) shows the money per year and category.
 
 ## To fix — defects for the mechanic
 
-Car → **To fix** → **⊕**: describe what is broken (*Left turn signal*), optionally with a photo. The list stays until
+Car → **To fix** → **⊕**: describe what is broken (*Left turn signal*), optionally with a photo (camera or gallery). The list stays until
 a diary entry fixes the issue, or you withdraw it (**long-press** → reason, e.g. *fixed it myself*).
 
 - **Share** opens Android's share sheet (Viber, Telegram, SMS …) with a ready message:

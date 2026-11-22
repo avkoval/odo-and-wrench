@@ -1,0 +1,57 @@
+(ns auto-maintenance.domain.receipt
+  "Garage receipts transcribed by an AI agent (D18): the prompt the app copies, and the parser of the pasted JSON
+  (docs/receipt-format.md). Pure; used by decide (import-receipt) and by the Log work screen for the preview."
+  (:require ["dart:convert" :as convert]
+            [clojure.string :as str]))
+
+(def prompt
+  "Transcribe this car service receipt into JSON, exactly in this shape and nothing else (no comments, no markdown):
+
+{\"date\": \"YYYY-MM-DD\", \"km\": 123456, \"place\": \"garage name\", \"order_no\": \"receipt number\", \"currency\": \"UAH\",
+ \"parts\": [{\"name\": \"...\", \"qty\": 1, \"unit\": \"pcs\", \"price\": 0.00, \"sum\": 0.00}],
+ \"labor\": [{\"name\": \"...\", \"qty\": 1, \"unit\": \"h\", \"price\": 0.00, \"sum\": 0.00}],
+ \"total\": 0.00}
+
+Rules:
+- parts = the spare parts / materials table, labor = the works table; one object per line, in receipt order.
+- Numbers as plain JSON numbers with a dot: 1 600,00 -> 1600.00; km without spaces: 248 258 -> 248258.
+- Keep names as printed (any language); unit as printed (l, шт, год …); leave out lines with no price.
+- \"km\" is the mileage on the receipt; \"date\" is the receipt date; omit a field you cannot read.
+- Do not include personal data (customer name, phone, VIN, plate, mechanic names).
+- Check: every sum = qty × price, total = sum of all lines. If the receipt disagrees, copy the receipt's numbers.")
+
+(defn- ->clj [x]
+  (cond
+    (dart/is? x Map) (into {}
+                       (map (fn [^MapEntry e] [(keyword (str (.-key e))) (->clj (.-value e))]))
+                       (.-entries ^Map x))
+    (dart/is? x List) (into [] (map ->clj) x)
+    :else x))
+
+(defn money
+  "A JSON number (1600, 1955.0) as the app's money string \"1600.00\"; strings are kept."
+  [x]
+  (if (number? x)
+    (let [c (.round (* 100 ^num x))]
+      (str (quot c 100) "." (.padLeft (str (rem c 100)) 2 "0")))
+    x))
+
+(defn- line [{:keys [name qty unit price sum]}]
+  (into {} (filter (comp some? val)) {:name name :qty qty :unit unit :price (money price) :sum (money sum)}))
+
+(defn- reject [msg] (throw (ex-info msg {:category "invalid"})))
+
+(defn parse
+  "Pasted receipt JSON -> {:at :km :place :order_no :currency :parts :labor :total}, or (ex-info … {:category
+  \"invalid\"}) when it is not a receipt in the format. Arithmetic is checked by decide, not here."
+  [text]
+  (let [data (try (->clj (convert/jsonDecode (str/trim (str text)))) (catch Object _ nil))
+        {:keys [date km place order_no currency parts labor total]} (when (map? data) data)]
+    (cond
+      (not (map? data)) (reject "not a receipt in the JSON format (see Copy prompt)")
+      (not (and (string? date) (re-matches #"\d{4}-\d{2}-\d{2}" date))) (reject "the receipt has no date (YYYY-MM-DD)")
+      (not (and (int? km) (pos? km))) (reject "the receipt has no km")
+      (nil? total) (reject "the receipt has no total"))
+    (into {} (filter (comp some? val))
+      {:at date :km km :place place :order_no (some-> order_no str) :currency (or currency "UAH")
+       :parts (mapv line parts) :labor (mapv line labor) :total (money total)})))

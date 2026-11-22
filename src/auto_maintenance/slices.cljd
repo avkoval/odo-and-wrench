@@ -21,6 +21,7 @@
    "correct-odometer" {:decide d/handle}
    "mileage" {:project v/mileage}
    "log-maintenance" {:decide d/handle}
+   "import-receipt" {:decide d/handle}
    "void-maintenance" {:decide d/handle}
    "diary" {:project v/diary}
    "costs-by-year" {:project v/costs-by-year}
