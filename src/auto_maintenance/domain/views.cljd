@@ -84,7 +84,9 @@
         (reduce (fn [acc {:keys [item] :as e}]
                   (case (:type e)
                     :schedule/item-defined (-> acc (update :order conj item) (assoc-in [:items item] (dissoc e :type)))
-                    :schedule/item-changed (update-in acc [:items item] merge (dissoc e :type :reason))
+                    :schedule/item-changed (update-in acc [:items item]
+                                                      #(merge (dissoc % :every_km :every_months :soon_km :soon_days)
+                                                         (select-keys e [:every_km :every_months :soon_km :soon_days])))
                     :schedule/item-retired (update acc :items dissoc item)
                     acc))
           {:order [] :items {}} events)]

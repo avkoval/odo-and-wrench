@@ -15,6 +15,8 @@
    "garage" {:project v/garage}
    "car-by-plate" {:project v/car-by-plate}
    "define-schedule-item" {:decide d/handle}
+   "change-schedule-item" {:decide d/handle}
+   "retire-schedule-item" {:decide d/handle}
    "record-odometer" {:decide d/handle}
    "correct-odometer" {:decide d/handle}
    "mileage" {:project v/mileage}
@@ -26,4 +28,6 @@
    "withdraw-issue" {:decide d/handle}
    "open-issues" {:project v/open-issues}
    "settings" {:project v/settings}
+   "choose-language" {:decide d/handle}
+   "configure-reminders" {:decide d/handle}
    "due-list" {:project v/due-list}})

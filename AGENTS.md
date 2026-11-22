@@ -20,9 +20,19 @@ system; its socket REPL port is in `REPL.lock`.
 Keeping the REPL alive (ClojureDart REPL is beta, ClojureDart#364): one thread in the watcher routes the app's
 output to the REPL clients and acknowledges each evaluation. If it writes to a client socket that is already closed,
 it dies with "Broken pipe" and no evaluation is ever acknowledged again — every session hangs.
+- Never connect before the app is ready. The watcher writes `REPL.lock` when its server starts, long before the app
+  runs; a session opened then evaluates its `(ns cljd.user …)` under the global compiler lock, the hot reload goes
+  nowhere, the lock is held forever and even file recompilation stops (no more "Performing hot reload..."). `bb dev`
+  records the state in `target/repl-state` (ready after "REPL listening" / "Reloaded … libraries", reloading,
+  restarting) and `bb repl-eval` refuses unless it is ready — always start the app with `bb dev`.
 - One form per `bb repl-eval`; it disconnects only after the result and the next prompt arrived. Never kill a
   client mid-evaluation, never send anything you will not wait for (`:repl/quit` is evaluated like any form), and do
   not hot-restart (`R`) while an evaluation is pending.
+- The watcher tracks Flutter's output: after "Performing hot reload..." it waits for "Reloaded N of M libraries".
+  When Flutter rejects or fails a hot reload (an incompatible Dart change, e.g. turning a def into a function),
+  that line never comes, the watcher stays "reloading" forever and no REPL evaluation is ever sent — even `R` does
+  not get it out. Saving files triggers hot reloads in the user's app, so batch file saves and avoid changes Dart
+  cannot hot-reload while the REPL is in use.
 - A REPL that prints nothing, not even its banner, is wedged: only restarting `bb dev` helps. Ask the user to do it;
   never start or stop the user's `bb dev` yourself.
 

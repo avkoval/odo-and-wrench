@@ -6,7 +6,7 @@
 
 ;; ------------------------------------------------------------------ state
 
-(def initial {:cars {} :plates {} :vins {} :items {} :readings {} :log {} :issues {} :entries {}})
+(def initial {:settings {:language "en"} :cars {} :plates {} :vins {} :items {} :readings {} :log {} :issues {} :entries {}})
 
 (defn- log-event
   "Every event of a car is also kept in its log, for rules that need a read model (current km)."
@@ -23,8 +23,11 @@
 (defn- evolve-schedule-item-defined [state {:keys [car item] :as e}]
   (assoc-in state [:items [car item]] (assoc e :active true)))
 
+(def interval-keys [:every_km :every_months :soon_km :soon_days])
+
 (defn- evolve-schedule-item-changed [state {:keys [car item] :as e}]
-  (update-in state [:items [car item]] merge (dissoc e :type :reason)))
+  ;; a change replaces all intervals: what the event leaves out is no longer set
+  (update-in state [:items [car item]] #(merge (apply dissoc % interval-keys) (select-keys e interval-keys))))
 
 (defn- evolve-schedule-item-retired [state {:keys [car item]}]
   (assoc-in state [:items [car item] :active] false))
@@ -50,11 +53,15 @@
     (set-open (get-in state [:entries entry :fixes]) true)
     (assoc-in [:entries entry :voided] true)))
 
+(defn- evolve-settings-language-chosen [state {:keys [language]}]
+  (assoc-in state [:settings :language] language))
+
 (defn evolve
   "Applies one event to the state. Plain `case` dispatch (not a multimethod): hot reload updates function bodies
   but does not re-run top-level defmethod registrations."
   [state event]
   (case (:type event)
+    :settings/language-chosen (evolve-settings-language-chosen state event)
     :default (evolve-default state event)
     :car/registered (evolve-car-registered state event)
     :schedule/item-defined (evolve-schedule-item-defined state event)
@@ -150,6 +157,55 @@
       (str/blank? reason) (reject "invalid" "say why the issue is withdrawn")))
   [(merge {:type :issue/withdrawn} (present cmd [:car :issue :reason]))])
 
+(defn- require-active-item [state car item]
+  (let [it (get-in state [:items [car item]])]
+    (when-not (and (:active it) (= car (:car it)))
+      (reject "not-found" (str item " is not in the schedule of " car)))
+    it))
+
+(defn- decide-schedule-change-item [state {:keys [car item every_km every_months soon_km soon_days] :as cmd}]
+  (require-car state car)
+  (let [it (require-active-item state car item)
+        intervals (present cmd [:every_km :every_months :soon_km :soon_days])]
+    (cond
+      (and (nil? every_km) (nil? every_months)) (reject "invalid" "an interval in km or months is required")
+      (not (every? positive-or-absent? [every_km every_months soon_km soon_days]))
+      (reject "invalid" "intervals must be positive whole numbers"))
+    (if (= intervals (present it [:every_km :every_months :soon_km :soon_days]))
+      []
+      [(merge {:type :schedule/item-changed} (present cmd [:car :item :every_km :every_months :soon_km :soon_days :reason]))])))
+
+(defn- decide-schedule-retire-item [state {:keys [car item] :as cmd}]
+  (require-car state car)
+  (require-active-item state car item)
+  [(merge {:type :schedule/item-retired} (present cmd [:car :item :reason]))])
+
+(def languages
+  "Languages with translations (D11); English is the default."
+  #{"en" "uk"})
+
+(defn- decide-settings-choose-language [state {:keys [language]}]
+  (cond
+    (not (languages language)) (reject "invalid" (str "no translations for " language))
+    (= language (get-in state [:settings :language])) []
+    :else [{:type :settings/language-chosen :language language}]))
+
+(def weekdays #{"mon" "tue" "wed" "thu" "fri" "sat" "sun"})
+
+(defn valid-time? [t]
+  (when-let [[_ h m] (and (string? t) (re-matches #"(\d\d):(\d\d)" t))]
+    (and (< (int/parse h) 24) (< (int/parse m) 60))))
+
+(defn- decide-settings-configure-reminders [_state {:keys [notify_at days soon_km soon_days stale_days enabled] :as cmd}]
+  (cond
+    (not (valid-time? notify_at)) (reject "invalid" "time must be HH:MM")
+    (or (empty? days) (not-every? weekdays days)) (reject "invalid" "pick at least one day")
+    (not (every? #(and (int? %) (pos? %)) [soon_km soon_days stale_days]))
+    (reject "invalid" "windows must be positive whole numbers")
+    (not (boolean? enabled)) (reject "invalid" "enabled must be true or false"))
+  [(merge {:type :settings/reminders-configured}
+     (present cmd [:notify_at :days :soon_km :soon_days :stale_days :enabled]))])
+
 (def cost-categories #{"service" "repair" "tyres" "other"})
 
 (defn- decide-maintenance-log [state {:keys [car km items extra fixes cost category] :as cmd}]
@@ -179,7 +235,11 @@
   [state command]
   (case (:type command)
     :car/register (decide-car-register state command)
+    :settings/choose-language (decide-settings-choose-language state command)
+    :settings/configure-reminders (decide-settings-configure-reminders state command)
     :schedule/define-item (decide-schedule-define-item state command)
+    :schedule/change-item (decide-schedule-change-item state command)
+    :schedule/retire-item (decide-schedule-retire-item state command)
     :odometer/record (decide-odometer-record state command)
     :odometer/correct (decide-odometer-correct state command)
     :issue/report (decide-issue-report state command)

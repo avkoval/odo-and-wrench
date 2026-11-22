@@ -53,29 +53,48 @@
 
 ;; ------------------------------------------------------------------ add schedule item
 
-(defn add-item-page [car]
+(defn add-item-page
+  "define-schedule-item, plus — when the owner knows it — the last time the job was done, recorded as a past diary
+  entry (D6): the next due point counts from it (LPG filters done 2 000 km ago -> due in 6 000 km)."
+  [car]
   (f/widget
     :context ctx
     :managed [title (m/TextEditingController)
               every-km (m/TextEditingController)
               every-months (m/TextEditingController)
-              soon-km (m/TextEditingController)]
+              soon-km (m/TextEditingController)
+              last-km (m/TextEditingController)
+              last-at (m/TextEditingController .text (dates/today))]
     (m/Scaffold
       .appBar (m/AppBar .title (m/Text "Add schedule item")))
     .body
     (m/ListView .padding (m/EdgeInsets.all 16.0))
     .children
-    [(field title "Job, e.g. Engine oil + filter")
+    [(field title "Job, e.g. LPG filters")
      (field every-km "Every … km" m/TextInputType.number)
      (field every-months "Every … months" m/TextInputType.number)
      (field soon-km "Warn … km before (optional)" m/TextInputType.number)
+     (m/Padding .padding (m/EdgeInsets.only .top 12.0 .bottom 4.0)
+       .child (m/Text "Last done (optional) — e.g. at installation, or from the service book"))
+     (field last-km "Last done at … km on the odometer" m/TextInputType.number)
+     (field last-at "Last done on (YYYY-MM-DD)")
      (m/FilledButton
        .onPressed (fn []
-                    (let [taken (map :item (:items (app/due-list @app/!events car)))]
-                      (submit! ctx {:type :schedule/define-item :car car
-                                    :item (app/slug (text-of title) taken) :title (text-of title)
-                                    :every_km (int-of every-km) :every_months (int-of every-months)
-                                    :soon_km (int-of soon-km)}))
+                    (let [events @app/!events
+                          item (app/slug (text-of title) (map :item (app/schedule events car)))
+                          km (int-of last-km)
+                          at (text-of last-at)
+                          error (await (app/execute! {:type :schedule/define-item :car car :item item
+                                                      :title (text-of title) :every_km (int-of every-km)
+                                                      :every_months (int-of every-months) :soon_km (int-of soon-km)}))
+                          error (or error
+                                  (when (or km (not= at (dates/today)))
+                                    (await (app/execute! {:type :maintenance/log :car car
+                                                          :entry (app/next-id @app/!events :entry "M")
+                                                          :at at :km (or km (:km (app/mileage events car)))
+                                                          :items [item] :extra []
+                                                          :note "last done before it was tracked"}))))]
+                      (if error (show-error ctx error) (.pop (m/Navigator.of ctx))))
                     nil)
        .child (m/Text "Save"))]))
 
@@ -273,15 +292,16 @@
 (def categories ["service" "repair" "tyres" "other"])
 
 (defn log-entry-page
-  "log-maintenance: one visit — scheduled jobs, free-text work, fixed issues, cost. Past work can be entered too."
-  [car-id]
+  "log-maintenance: one visit — scheduled jobs, free-text work, fixed issues, cost. Past work can be entered too;
+  `item` pre-ticks one job (\"when was it last done?\")."
+  [car-id & [item]]
   (f/widget
     :context ctx
     :let [events @app/!events
           jobs (app/schedule events car-id)
           open (:issues (app/open-issues events car-id))
           current-km (:km (app/mileage events car-id))]
-    :managed [!form (atom {:items #{} :fixes #{} :category "service" :photo nil}) :dispose nil
+    :managed [!form (atom {:items (if item #{item} #{}) :fixes #{} :category "service" :photo nil}) :dispose nil
               at (m/TextEditingController .text (dates/today))
               km (m/TextEditingController .text (str (or current-km "")))
               extra (m/TextEditingController)
@@ -417,11 +437,56 @@
           .subtitle (m/Text (entry-subtitle e))
           .onLongPress #(void-dialog ctx car-id e))))))
 
+;; ------------------------------------------------------------------ edit schedule item
+
+(defn edit-item-page
+  "change-schedule-item / retire-schedule-item for one job of the schedule."
+  [car-id item-id]
+  (f/widget
+    :context ctx
+    :let [{:keys [title every_km every_months soon_km]} (some #(when (= item-id (:item %)) %)
+                                                         (app/schedule @app/!events car-id))]
+    :managed [km (m/TextEditingController .text (str (or every_km "")))
+              months (m/TextEditingController .text (str (or every_months "")))
+              soon (m/TextEditingController .text (str (or soon_km "")))
+              reason (m/TextEditingController)]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text (str title))))
+    .body
+    (m/ListView .padding (m/EdgeInsets.all 16.0))
+    .children
+    [(field km "Every … km" m/TextInputType.number)
+     (field months "Every … months" m/TextInputType.number)
+     (field soon "Warn … km before (optional)" m/TextInputType.number)
+     (field reason "Reason, e.g. city driving, short trips (optional)")
+     (m/FilledButton
+       .onPressed (fn []
+                    (submit! ctx (into {} (filter (comp some? val))
+                                   {:type :schedule/change-item :car car-id :item item-id
+                                    :every_km (int-of km) :every_months (int-of months) :soon_km (int-of soon)
+                                    :reason (blank->nil (text-of reason))}))
+                    nil)
+       .child (m/Text "Save intervals"))
+     (m/SizedBox .height 12.0)
+     (m/OutlinedButton.icon
+       .onPressed #(push! ctx (log-entry-page car-id item-id))
+       .icon (m/Icon m/Icons.history)
+       .label (m/Text "Record when it was last done"))
+     (m/SizedBox .height 24.0)
+     (m/OutlinedButton.icon
+       .onPressed (fn []
+                    (submit! ctx (into {} (filter (comp some? val))
+                                   {:type :schedule/retire-item :car car-id :item item-id
+                                    :reason (blank->nil (text-of reason))}))
+                    nil)
+       .icon (m/Icon m/Icons.delete_outline)
+       .label (m/Text "Stop tracking this job (history stays in the diary)"))]))
+
 ;; ------------------------------------------------------------------ car
 
 (defn due-subtitle [{:keys [due_km due_at remaining_km predicted_at last_km last_at status]}]
   (if (= "unknown" status)
-    "never done — enter the last time from the service book"
+    "never done — tap to enter when it was last done"
     (str/join " · " (remove nil? [(when last_km (str "done " last_km " km, " last_at))
                                   (when due_km (str "due " due_km " km"))
                                   (when remaining_km (str remaining_km " km left"))
@@ -468,7 +533,8 @@
             .key (m/ValueKey item)
             .title (m/Text (str title))
             .subtitle (m/Text (due-subtitle it))
-            .trailing (status-chip status)))))))
+            .trailing (status-chip status)
+            .onTap #(push! ctx (if (= "unknown" status) (log-entry-page car-id item) (edit-item-page car-id item)))))))))
 
 ;; ------------------------------------------------------------------ add car
 
