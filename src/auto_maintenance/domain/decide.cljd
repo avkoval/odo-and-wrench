@@ -6,7 +6,7 @@
 
 ;; ------------------------------------------------------------------ state
 
-(def initial {:cars {} :plates {} :vins {} :items {} :readings {} :log {}})
+(def initial {:cars {} :plates {} :vins {} :items {} :readings {} :log {} :issues {} :entries {}})
 
 (defmulti evolve (fn [_state event] (:type event)))
 
@@ -33,6 +33,22 @@
 
 (defmethod evolve :odometer/recorded [state {:keys [reading] :as e}]
   (assoc-in state [:readings reading] e))
+
+(defmethod evolve :issue/reported [state {:keys [issue] :as e}]
+  (assoc-in state [:issues issue] (assoc e :open true)))
+
+(defmethod evolve :issue/withdrawn [state {:keys [issue]}]
+  (assoc-in state [:issues issue :open] false))
+
+(defn- set-open [state issues open?]
+  (reduce (fn [s i] (cond-> s (get-in s [:issues i]) (assoc-in [:issues i :open] open?))) state issues))
+
+(defmethod evolve :maintenance/performed [state {:keys [entry fixes] :as e}]
+  (-> state (assoc-in [:entries entry] e) (set-open fixes false)))
+
+(defmethod evolve :maintenance/voided [state {:keys [entry]}]
+  ;; voiding the visit reopens what it fixed (D14)
+  (set-open state (get-in state [:entries entry :fixes]) true))
 
 (defn state-of [events] (reduce (fn [s e] (evolve (log-event s e) e)) initial events))
 
@@ -106,6 +122,18 @@
     (str/blank? reason) (reject "invalid" "a correction needs a reason")
     (not (and (int? km) (pos? km))) (reject "invalid" "km must be a positive whole number"))
   [(merge {:type :odometer/corrected} (present cmd [:car :reading :km :reason]))])
+
+(defmethod decide :issue/report [state {:keys [car text] :as cmd}]
+  (require-car state car)
+  (when (str/blank? text) (reject "invalid" "describe what is broken"))
+  [(merge {:type :issue/reported} (present (update cmd :text str/trim) [:car :issue :at :text :photo]))])
+
+(defmethod decide :issue/withdraw [state {:keys [car issue reason] :as cmd}]
+  (let [{open :open owner :car} (get-in state [:issues issue])]
+    (cond
+      (not (and open (= owner car))) (reject "not-found" (str "no open issue " issue))
+      (str/blank? reason) (reject "invalid" "say why the issue is withdrawn")))
+  [(merge {:type :issue/withdrawn} (present cmd [:car :issue :reason]))])
 
 (defn handle
   "Decide `command` against the events of its stream."

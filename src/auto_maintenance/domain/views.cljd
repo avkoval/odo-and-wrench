@@ -139,3 +139,20 @@
                   (cond-> {:car car :name name :plate plate}
                     km (assoc :km km :km_at km_at)
                     urgent (assoc :most_urgent (select-keys urgent [:item :title :status :remaining_km])))))}))
+
+;; ------------------------------------------------------------------ issues
+
+(defn open-issues
+  "Open issues of a car, oldest first, and the message for the mechanic (D14, D15)."
+  [events _params]
+  (let [{:keys [car name plate]} (first (of-type :car/registered events))
+        fixed (set (mapcat :fixes (diary-entries events)))
+        withdrawn (set (map :issue (of-type :issue/withdrawn events)))
+        issues (vec (for [e (of-type :issue/reported events)
+                          :when (not (or (fixed (:issue e)) (withdrawn (:issue e))))]
+                      (into {} (filter (comp some? val)) (select-keys e [:issue :at :text :photo]))))]
+    {:car (or car (some :car events))
+     :issues issues
+     :message (when (seq issues)
+                (apply str (str name (when plate (str " (" plate ")")) " — to fix:")
+                  (map-indexed (fn [i {:keys [text]}] (str "\n" (inc i) ". " text)) issues)))}))

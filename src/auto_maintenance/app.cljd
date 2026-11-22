@@ -45,6 +45,8 @@
 
 (defn mileage [events car] (v/mileage (car-events events car) nil))
 
+(defn open-issues [events car] (v/open-issues (car-events events car) nil))
+
 (defn slug
   "An id from a name (\"Subaru Forester\" -> subaru-forester), unique among `taken`."
   [s taken]

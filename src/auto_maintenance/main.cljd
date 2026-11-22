@@ -1,6 +1,8 @@
 (ns auto-maintenance.main
   "Screens. They render read models and send commands through app/execute!; no business logic here."
   (:require ["package:flutter/material.dart" :as m]
+            ["package:flutter/services.dart" :as svc]
+            ["package:share_plus/share_plus.dart" :as share]
             [cljd.flutter :as f]
             [clojure.string :as str]
             [auto-maintenance.app :as app]
@@ -179,6 +181,93 @@
                                                             (str "corrected from " corrected_from ": " reason))])))
           .onLongPress #(correct-dialog ctx car-id r))))))
 
+;; ------------------------------------------------------------------ issues (things to fix)
+
+(defn add-issue-page
+  "report-issue: what is broken, with an optional photo."
+  [car-id]
+  (f/widget
+    :context ctx
+    :managed [!photo (atom nil) :dispose nil
+              text (m/TextEditingController)]
+    :watch [photo !photo]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "Something to fix")))
+    .body
+    (m/ListView .padding (m/EdgeInsets.all 16.0))
+    .children
+    (remove nil?
+      [(field text "What is broken, e.g. Left turn signal")
+       (m/OutlinedButton.icon
+         .onPressed (fn [] (when-some [p (await (photos/take-photo!))] (reset! !photo p)) nil)
+         .icon (m/Icon m/Icons.photo_camera)
+         .label (m/Text (if photo "Another photo" "Photo (optional)")))
+       (when photo
+         (m/Padding .padding (m/EdgeInsets.symmetric .vertical 8.0)
+           .child (m/Image.file (photos/file-of-tmp photo) .height 200.0 .fit m/BoxFit.contain)))
+       (m/FilledButton
+         .onPressed (fn []
+                      (let [issue (app/next-id @app/!events :issue "I")
+                            today (dates/today)]
+                        (submit! ctx (cond-> {:type :issue/report :car car-id :issue issue :at today
+                                              :text (text-of text)}
+                                       photo (assoc :photo (await (photos/keep! photo car-id
+                                                                    (str today "-" issue ".jpg")))))))
+                      nil)
+         .child (m/Text "Save"))])))
+
+(defn withdraw-dialog [ctx car-id {:keys [issue text]}]
+  (m/showDialog
+    .context ctx
+    .builder (f/build
+               :context dctx
+               :managed [reason (m/TextEditingController)]
+               (m/AlertDialog
+                 .title (m/Text (str "Withdraw: " text))
+                 .content (field reason "Why, e.g. fixed it myself")
+                 .actions [(m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text "Cancel"))
+                           (m/FilledButton
+                             .onPressed (fn []
+                                          (submit! dctx {:type :issue/withdraw :car car-id :issue issue
+                                                         :reason (text-of reason)})
+                                          nil)
+                             .child (m/Text "Withdraw"))])))
+  nil)
+
+(defn copy-message! [ctx message]
+  (await (svc/Clipboard.setData (svc/ClipboardData .text message)))
+  (.showSnackBar (m/ScaffoldMessenger.of ctx) (m/SnackBar .content (m/Text "Copied — paste it to the mechanic")))
+  nil)
+
+(defn issues-section
+  "Open issues of the car with Add / Share / Copy, for the Car screen."
+  [ctx car-id {:keys [issues message]}]
+  (into [(m/ListTile
+           .title (m/Text "To fix" .style (m/TextStyle .fontWeight m/FontWeight.bold))
+           .trailing (m/Row
+                       .mainAxisSize m/MainAxisSize.min
+                       .children (remove nil?
+                                   [(when message
+                                      (m/IconButton .icon (m/Icon m/Icons.share) .tooltip "Share with the mechanic"
+                                        .onPressed #(do (.share share/SharePlus.instance (share/ShareParams .text message))
+                                                        nil)))
+                                    (when message
+                                      (m/IconButton .icon (m/Icon m/Icons.copy) .tooltip "Copy the list"
+                                        .onPressed #(copy-message! ctx message)))
+                                    (m/IconButton .icon (m/Icon m/Icons.add_circle_outline) .tooltip "Something to fix"
+                                      .onPressed #(push! ctx (add-issue-page car-id)))])))]
+    (if (empty? issues)
+      [(m/ListTile .dense true .title (m/Text "Nothing to fix"))]
+      (for [{:keys [issue at text photo] :as i} issues]
+        (m/ListTile
+          .key (m/ValueKey issue)
+          .leading (if photo
+                     (m/Image.file (photos/file-of photo) .width 48.0 .height 48.0 .fit m/BoxFit.cover)
+                     (m/Icon m/Icons.build .color m/Colors.orange))
+          .title (m/Text (str text))
+          .subtitle (m/Text (str issue " · since " at " · long-press to withdraw"))
+          .onLongPress #(withdraw-dialog ctx car-id i))))))
+
 ;; ------------------------------------------------------------------ car
 
 (defn due-subtitle [{:keys [due_km due_at remaining_km predicted_at last_km last_at status]}]
@@ -209,12 +298,16 @@
     .body
     (m/ListView)
     .children
-    (into [(m/ListTile
+    (concat
+      [(m/ListTile
              .title (m/Text (str (:plate car) "  ·  " (:make car) " " (:model car) " " (:year car)))
              .subtitle (m/Text (if km (str km " km on " km_at) "no odometer reading yet — tap the gauge above"))
              .trailing (m/Icon m/Icons.chevron_right)
              .onTap #(push! ctx (mileage-page car-id)))
            (m/Divider)]
+      (issues-section ctx car-id (app/open-issues events car-id))
+      [(m/Divider)
+       (m/ListTile .title (m/Text "Schedule" .style (m/TextStyle .fontWeight m/FontWeight.bold)))]
       (if (empty? items)
         [(m/ListTile .title (m/Text "No schedule yet — tap + to add a job"))]
         (for [{:keys [item title status] :as it} items]

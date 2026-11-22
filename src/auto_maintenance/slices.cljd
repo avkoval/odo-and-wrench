@@ -18,5 +18,8 @@
    "record-odometer" {:decide d/handle}
    "correct-odometer" {:decide d/handle}
    "mileage" {:project v/mileage}
+   "report-issue" {:decide d/handle}
+   "withdraw-issue" {:decide d/handle}
+   "open-issues" {:project v/open-issues}
    "settings" {:project v/settings}
    "due-list" {:project v/due-list}})
