@@ -54,13 +54,24 @@
           low (reduce min (map :km window))]
       (when (pos? days) (/ (- latest low) days)))))
 
+(defn odometer-readings
+  "Odometer readings, newest first, with corrected km (the photo and the recogniser's number kept)."
+  [events]
+  (let [corrections (into {} (map (juxt :reading identity)) (of-type :odometer/corrected events))]
+    (->> (of-type :odometer/recorded events)
+      (map (fn [e] (let [c (corrections (:reading e))]
+                     (cond-> (dissoc e :type) c (assoc :km (:km c) :corrected_from (:km e) :reason (:reason c))))))
+      (sort-by :at)
+      reverse
+      vec)))
+
 (defn mileage [events _params]
   (let [rs (readings events)
         car (some :car events)]
     (if (empty? rs)
-      {:car car}
+      {:car car :readings []}
       (let [top (apply max-key :km rs)]
-        (cond-> {:car car :km (:km top) :km_at (:at top)}
+        (cond-> {:car car :km (:km top) :km_at (:at top) :readings (odometer-readings events)}
           (km-per-day rs) (assoc :km_per_day (km-per-day rs)))))))
 
 ;; ------------------------------------------------------------------ due list

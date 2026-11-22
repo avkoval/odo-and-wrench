@@ -1,0 +1,45 @@
+(ns auto-maintenance.photos
+  "Camera, on-device text recognition (ML Kit, D3) and photo files kept in the app's documents folder. Event
+  attributes hold paths relative to that folder (photos/<car>/<file>)."
+  (:require ["dart:io" :as io]
+            ["package:image_picker/image_picker.dart" :as ip]
+            ["package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart" :as tr]
+            ["package:path_provider/path_provider.dart" :as pp]))
+
+(defonce !docs-dir (atom nil))
+
+(defn start! []
+  (reset! !docs-dir (.-path (await (pp/getApplicationDocumentsDirectory)))))
+
+(defn file-of
+  "The File of a photo path stored in an event."
+  ^io/File [rel]
+  (io/File (str @!docs-dir "/" rel)))
+
+(defn file-of-tmp [path] (io/File path))
+
+(defn take-photo!
+  "Opens the camera; returns the temporary path of the photo, or nil when cancelled."
+  []
+  (when-some [^ip/XFile x (await (.pickImage (ip/ImagePicker) .source ip/ImageSource.camera
+                                   .maxWidth 2000.0 .imageQuality 85))]
+    (.-path x)))
+
+(defn recognize-lines
+  "Text lines ML Kit finds in the image: [{:text \"129400\" :confidence 0.9}]."
+  [path]
+  (let [recognizer (tr/TextRecognizer .script tr/TextRecognitionScript.latin)
+        ^tr/RecognizedText result (await (.processImage recognizer (tr/InputImage.fromFilePath path)))]
+    (await (.close recognizer))
+    (vec (for [^tr/TextBlock block (.-blocks result)
+               ^tr/TextLine line (.-lines block)]
+           {:text (.-text line) :confidence (.-confidence line)}))))
+
+(defn keep!
+  "Copies a temporary photo to photos/<car>/<name>; returns that relative path."
+  [tmp-path car name]
+  (let [rel (str "photos/" car "/" name)
+        ^io/File f (file-of rel)]
+    (await (.create (.-parent f) .recursive true))
+    (await (.copy (io/File tmp-path) (.-path f)))
+    rel))

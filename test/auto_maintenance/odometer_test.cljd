@@ -1,0 +1,14 @@
+(ns auto-maintenance.odometer-test
+  (:require [cljd.test :refer [deftest is]]
+            [auto-maintenance.domain.odometer :as odometer]))
+
+(deftest numbers-in-a-line
+  (is (= [129400] (vec (odometer/numbers-in "129400"))))
+  (is (= [129400] (vec (odometer/numbers-in "ODO 129 400 km"))))
+  (is (= [123] (vec (odometer/numbers-in "TRIP 123.4")))))
+
+(deftest best-candidate-is-closest-above-last-km
+  (let [lines [{:text "TRIP A 523.4" :confidence 0.9} {:text "130180 km" :confidence 0.7}
+               {:text "130780" :confidence 0.4}]]
+    (is (= [130180 130780 523] (mapv :km (odometer/candidates lines 129400))))
+    (is (= [130780 130180 523] (mapv :km (odometer/candidates lines nil))))))

@@ -5,6 +5,7 @@
             [auto-maintenance.domain.dates :as dates]
             [auto-maintenance.domain.views :as v]
             [auto-maintenance.store :as store]
+            [auto-maintenance.photos :as photos]
             [clojure.string :as str]))
 
 (defonce !db (atom nil))
@@ -15,6 +16,7 @@
 
 (defn start! []
   (let [db (await (store/open!))]
+    (await (photos/start!))
     (reset! !db db)
     (reset! !events (await (store/load-all db)))))
 
@@ -49,3 +51,10 @@
   (let [base (-> s str/lower-case str/trim (str/replace #"[^a-z0-9]+" "-") (str/replace #"^-|-$" ""))
         base (if (str/blank? base) "x" base)]
     (first (remove (set taken) (cons base (map #(str base "-" %) (range 2 1000)))))))
+
+(defn next-id
+  "Next id of a kind (\"O\" readings, \"M\" diary entries, \"I\" issues): O-0001, O-0002 …, never reused."
+  [events k prefix]
+  (let [used (keep #(when-let [id (get % k)] (when (str/starts-with? id (str prefix "-")) (int/parse (subs id 2))))
+               events)]
+    (str prefix "-" (.padLeft (str (inc (reduce max 0 used))) 4 "0"))))

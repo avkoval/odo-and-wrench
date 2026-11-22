@@ -1,13 +1,19 @@
 (ns auto-maintenance.domain.decide
   "Command handling: `state` is the fold of the stream's events (`evolve`), `decide` turns a command into events
   or rejects it with (ex-info msg {:category \"invalid\" | \"not-found\" | \"conflict\"}). Pure, no I/O."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [auto-maintenance.domain.views :as v]))
 
 ;; ------------------------------------------------------------------ state
 
-(def initial {:cars {} :plates {} :vins {} :items {}})
+(def initial {:cars {} :plates {} :vins {} :items {} :readings {} :log {}})
 
 (defmulti evolve (fn [_state event] (:type event)))
+
+(defn- log-event
+  "Every event of a car is also kept in its log, for rules that need a read model (current km)."
+  [state {:keys [car] :as e}]
+  (cond-> state car (update-in [:log car] (fnil conj []) e)))
 
 (defmethod evolve :default [state _] state)
 
@@ -25,7 +31,10 @@
 (defmethod evolve :schedule/item-retired [state {:keys [car item]}]
   (assoc-in state [:items [car item] :active] false))
 
-(defn state-of [events] (reduce evolve initial events))
+(defmethod evolve :odometer/recorded [state {:keys [reading] :as e}]
+  (assoc-in state [:readings reading] e))
+
+(defn state-of [events] (reduce (fn [s e] (evolve (log-event s e) e)) initial events))
 
 ;; ------------------------------------------------------------------ helpers
 
@@ -49,8 +58,11 @@
 
 (defn positive-or-absent? [x] (or (nil? x) (and (int? x) (pos? x))))
 
-(defn require-car [state car]
-  (when-not (get-in state [:cars car]) (reject "not-found" (str "unknown car " car))))
+(defn require-car
+  "A car exists once its stream has events (normally starting with car/registered)."
+  [state car]
+  (when-not (or (get-in state [:cars car]) (seq (get-in state [:log car])))
+    (reject "not-found" (str "unknown car " car))))
 
 ;; ------------------------------------------------------------------ commands
 
@@ -78,6 +90,22 @@
     (get-in state [:items [car item] :active]) (reject "conflict" (str item " is already in the schedule")))
   [(merge {:type :schedule/item-defined}
      (present cmd [:car :item :title :every_km :every_months :soon_km :soon_days]))])
+
+(defmethod decide :odometer/record [state {:keys [car km] :as cmd}]
+  (require-car state car)
+  (let [current (:km (v/mileage (get-in state [:log car]) nil))]
+    (cond
+      (not (and (int? km) (pos? km))) (reject "invalid" "km must be a positive whole number")
+      (and current (< km current)) (reject "conflict" (str "the odometer does not go back: last " current " km"))))
+  [(merge {:type :odometer/recorded}
+     (present cmd [:car :reading :at :km :source :photo :recognized_km :confidence]))])
+
+(defmethod decide :odometer/correct [state {:keys [car reading km reason] :as cmd}]
+  (cond
+    (not= car (get-in state [:readings reading :car])) (reject "not-found" (str "unknown reading " reading))
+    (str/blank? reason) (reject "invalid" "a correction needs a reason")
+    (not (and (int? km) (pos? km))) (reject "invalid" "km must be a positive whole number"))
+  [(merge {:type :odometer/corrected} (present cmd [:car :reading :km :reason]))])
 
 (defn handle
   "Decide `command` against the events of its stream."

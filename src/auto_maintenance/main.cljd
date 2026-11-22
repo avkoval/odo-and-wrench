@@ -3,7 +3,10 @@
   (:require ["package:flutter/material.dart" :as m]
             [cljd.flutter :as f]
             [clojure.string :as str]
-            [auto-maintenance.app :as app]))
+            [auto-maintenance.app :as app]
+            [auto-maintenance.photos :as photos]
+            [auto-maintenance.domain.dates :as dates]
+            [auto-maintenance.domain.odometer :as odometer]))
 
 ;; ------------------------------------------------------------------ helpers
 
@@ -74,6 +77,108 @@
                     nil)
        .child (m/Text "Save"))]))
 
+;; ------------------------------------------------------------------ odometer
+
+(defn odometer-page
+  "record-odometer: photo -> recognised number -> the owner confirms or fixes it (D2). Typing without a photo works too."
+  [car-id]
+  (f/widget
+    :context ctx
+    :managed [!shot (atom {:photo nil :candidates [] :busy false}) :dispose nil
+              km (m/TextEditingController)]
+    :watch [{:keys [photo candidates busy]} !shot]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "Odometer reading")))
+    .body
+    (m/ListView .padding (m/EdgeInsets.all 16.0))
+    .children
+    (remove nil?
+      [(m/FilledButton.icon
+         .onPressed (fn []
+                      (when-some [path (await (photos/take-photo!))]
+                        (swap! !shot assoc :photo path :busy true)
+                        (let [last-km (:km (app/mileage @app/!events car-id))
+                              found (odometer/candidates (await (photos/recognize-lines path)) last-km)]
+                          (swap! !shot assoc :candidates found :busy false)
+                          (when-some [best (first found)] (set! (.-text km) (str (:km best))))))
+                      nil)
+         .icon (m/Icon m/Icons.photo_camera)
+         .label (m/Text (if photo "Take another photo" "Photo of the odometer")))
+       (when photo
+         (m/Padding .padding (m/EdgeInsets.symmetric .vertical 8.0)
+           .child (m/Image.file (photos/file-of-tmp photo) .height 220.0 .fit m/BoxFit.contain)))
+       (when busy (m/LinearProgressIndicator))
+       (when (seq candidates)
+         (m/Wrap .spacing 8.0
+           .children (for [{c :km} (take 5 candidates)]
+                       (m/ActionChip .label (m/Text (str c)) .onPressed (fn [] (set! (.-text km) (str c)) nil)))))
+       (field km "km on the odometer" m/TextInputType.number)
+       (m/FilledButton
+         .onPressed (fn []
+                      (let [events @app/!events
+                            reading (app/next-id events :reading "O")
+                            today (dates/today)
+                            best (first candidates)
+                            command (merge {:type :odometer/record :car car-id :reading reading :at today
+                                            :km (int-of km)}
+                                      (if photo
+                                        {:source "photo"
+                                         :photo (await (photos/keep! photo car-id (str today "-" reading ".jpg")))
+                                         :recognized_km (:km best) :confidence (:confidence best)}
+                                        {:source "manual"}))]
+                        (submit! ctx (into {} (filter (comp some? val)) command)))
+                      nil)
+         .child (m/Text "Save"))])))
+
+(defn correct-dialog [ctx car-id {:keys [reading km]}]
+  (m/showDialog
+    .context ctx
+    .builder (f/build
+               :context dctx
+               :managed [new-km (m/TextEditingController .text (str km))
+                         reason (m/TextEditingController)]
+               (m/AlertDialog
+                 .title (m/Text (str "Correct " reading))
+                 .content (m/Column .mainAxisSize m/MainAxisSize.min
+                            .children [(field new-km "km" m/TextInputType.number)
+                                       (field reason "Reason, e.g. misread 1 as 7")])
+                 .actions [(m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text "Cancel"))
+                           (m/FilledButton
+                             .onPressed (fn []
+                                          (submit! dctx {:type :odometer/correct :car car-id :reading reading
+                                                         :km (int-of new-km) :reason (text-of reason)})
+                                          nil)
+                             .child (m/Text "Correct"))])))
+  nil)
+
+(defn mileage-page [car-id]
+  (f/widget
+    :context ctx
+    :watch [events app/!events]
+    :let [{:keys [km km_at km_per_day readings]} (app/mileage events car-id)]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "Mileage")))
+    .body
+    (m/ListView)
+    .children
+    (into [(m/ListTile
+             .title (m/Text (if km (str km " km on " km_at) "no readings yet"))
+             .subtitle (m/Text (if km_per_day (str "≈ " (.round ^num km_per_day) " km per day") "")))
+           (m/Divider)]
+      (for [{:keys [reading at photo source recognized_km corrected_from reason] r-km :km :as r} readings]
+        (m/ListTile
+          .key (m/ValueKey reading)
+          .leading (if photo
+                     (m/Image.file (photos/file-of photo) .width 56.0 .height 56.0 .fit m/BoxFit.cover)
+                     (m/Icon m/Icons.edit_note))
+          .title (m/Text (str r-km " km  ·  " at))
+          .subtitle (m/Text (str/join " · " (remove nil? [reading source
+                                                          (when (and recognized_km (not= recognized_km r-km))
+                                                            (str "read as " recognized_km))
+                                                          (when corrected_from
+                                                            (str "corrected from " corrected_from ": " reason))])))
+          .onLongPress #(correct-dialog ctx car-id r))))))
+
 ;; ------------------------------------------------------------------ car
 
 (defn due-subtitle [{:keys [due_km due_at remaining_km predicted_at last_km last_at status]}]
@@ -93,7 +198,10 @@
           {:keys [km km_at]} (app/mileage events car-id)
           {:keys [items]} (app/due-list events car-id)]
     (m/Scaffold
-      .appBar (m/AppBar .title (m/Text (str (:name car))))
+      .appBar (m/AppBar
+                .title (m/Text (str (:name car)))
+                .actions [(m/IconButton .icon (m/Icon m/Icons.speed) .tooltip "Odometer reading"
+                            .onPressed #(push! ctx (odometer-page car-id)))])
       .floatingActionButton (m/FloatingActionButton
                               .onPressed #(push! ctx (add-item-page car-id))
                               .tooltip "Add schedule item"
@@ -103,7 +211,9 @@
     .children
     (into [(m/ListTile
              .title (m/Text (str (:plate car) "  ·  " (:make car) " " (:model car) " " (:year car)))
-             .subtitle (m/Text (if km (str km " km on " km_at) "no odometer reading yet")))
+             .subtitle (m/Text (if km (str km " km on " km_at) "no odometer reading yet — tap the gauge above"))
+             .trailing (m/Icon m/Icons.chevron_right)
+             .onTap #(push! ctx (mileage-page car-id)))
            (m/Divider)]
       (if (empty? items)
         [(m/ListTile .title (m/Text "No schedule yet — tap + to add a job"))]

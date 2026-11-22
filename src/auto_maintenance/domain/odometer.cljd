@@ -1,0 +1,24 @@
+(ns auto-maintenance.domain.odometer
+  "Picking the odometer reading out of recognised text (the translation in record-odometer, D2/D3). Pure: the
+  recogniser's lines in, candidate numbers out; the owner confirms one."
+  (:require [clojure.string :as str]))
+
+(defn numbers-in
+  "Whole numbers in a line of text: 3–7 digits, or digit groups separated by spaces (\"129 400\")."
+  [text]
+  (for [m (re-seq #"\d{1,3}(?: \d{3})+|\d{3,7}" text)
+        :let [digits (str/replace m " " "")]
+        :when (<= 3 (count digits) 7)]
+    (int/parse digits)))
+
+(defn candidates
+  "Candidate readings from recognised `lines` ([{:text .. :confidence ..}]), best first. With the last known km:
+  readings not below it, closest first, then the rest. Without it: the longest numbers first (the total counter
+  has more digits than the trip counter)."
+  [lines last-km]
+  (let [found (for [{:keys [text confidence]} lines, n (numbers-in text)] {:km n :confidence confidence})
+        unique (vals (reduce (fn [m {:keys [km] :as c}] (if (contains? m km) m (assoc m km c))) {} found))]
+    (vec (if last-km
+           (concat (sort-by #(- (:km %) last-km) (filter #(>= (:km %) last-km) unique))
+                   (sort-by #(- (:km %)) (remove #(>= (:km %) last-km) unique)))
+           (sort-by #(- (:km %)) unique)))))
