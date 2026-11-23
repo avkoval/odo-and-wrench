@@ -44,7 +44,8 @@ Rules:
   suspension-inspection.
 - "template": lowercase-with-hyphens from make, model, generation and fuel, e.g. "skoda-octavia-a7-petrol".
 - "match": the make and models as written on the car, the model years the manual covers, fuels from
-  petrol / diesel / lpg / electric / hybrid, and the engines it covers. Omit a key you cannot tell.
+  petrol / diesel / lpg / electric / hybrid, and the engines it covers. "make" is required; omit the other keys
+  you cannot tell.
 - "sources": the manual's sections and pages the intervals come from; each item's "sources" are indexes into that
   list. Copy the numbers from the manual; do not invent intervals the manual does not give.
 - Titles and notes in English ("en") and Ukrainian ("uk"), with the terms a Ukrainian garage uses.
@@ -62,5 +63,7 @@ Rules:
 | `sources` | `[{"title": …, "url": …}]` — manual pages or web pages the intervals come from |
 | `items[]` | `item` id, `title`, `every_km` and/or `every_months`, optional `soon_km` / `soon_days`, `note`, `sources` |
 
-The app rejects a paste that is not this JSON, an item without an id, title or interval, a number that is not a
-whole positive number, and the same template id with the same or an older version than one already imported.
+The app rejects a paste that is not this JSON, a car template without `match.make` (only an add-on can match by
+fuel alone), an item without an id, title or interval, and a number that is not a whole positive number. Pasting a
+template id that is already saved with the same or a newer version saves nothing and opens the saved one — that is
+also the way to use it for another car that does not match it.

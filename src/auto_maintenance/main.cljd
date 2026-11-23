@@ -199,13 +199,16 @@
                               .child (m/Column
                                        .mainAxisSize m/MainAxisSize.min
                                        .children [(m/Text (t :paste-template-hint))
-                                                  (field text "JSON")
+                                                  (m/SizedBox .height 8.0)
+                                                  (m/TextField .controller text .maxLines 8 .minLines 4
+                                                    .decoration (m/InputDecoration .hintText "{\"template\": …}"
+                                                                  .border (m/OutlineInputBorder)))
                                                   (when error (m/Text error))]))
                    .actions [(m/TextButton
                                .onPressed (fn []
                                             (await (svc/Clipboard.setData
                                                      (svc/ClipboardData .text (template/prompt))))
-                                            (when (.-mounted ctx) (snack! ctx (t :prompt-copied)))
+                                            (when (.-mounted ctx) (snack! ctx (t :template-prompt-copied)))
                                             nil)
                                .child (m/Text (t :copy-prompt)))
                              (m/TextButton
@@ -222,9 +225,13 @@
                                              tpl (template/parse input)
                                              rejection (await (app/execute! {:type :template/import :text input}))]
                                          (when (.-mounted dctx)
-                                           (if rejection
-                                             (reset! !form {:error (:message rejection)})
-                                             (.pop (m/Navigator.of dctx) (:template tpl)))))
+                                           (cond
+                                             ;; pasted again (to use it for another car): open the saved one
+                                             (= "conflict" (:category rejection))
+                                             (do (snack! ctx (t :template-already-saved))
+                                                 (.pop (m/Navigator.of dctx) (:template tpl)))
+                                             rejection (reset! !form {:error (:message rejection)})
+                                             :else (.pop (m/Navigator.of dctx) (:template tpl)))))
                                        (catch Object e
                                          (reset! !form {:error (or (ex-message e) (str e))}))))
                                    nil))

@@ -32,7 +32,8 @@ Rules:
   suspension-inspection.
 - \"template\": lowercase-with-hyphens from make, model, generation and fuel, e.g. \"skoda-octavia-a7-petrol\".
 - \"match\": the make and models as written on the car, the model years the manual covers, fuels from
-  petrol / diesel / lpg / electric / hybrid, and the engines it covers. Omit a key you cannot tell.
+  petrol / diesel / lpg / electric / hybrid, and the engines it covers. \"make\" is required; omit the other keys
+  you cannot tell.
 - \"sources\": the manual's sections and pages the intervals come from; each item's \"sources\" are indexes into that
   list. Copy the numbers from the manual; do not invent intervals the manual does not give.
 - Titles and notes in English (\"en\") and Ukrainian (\"uk\"), with the terms a Ukrainian garage uses.
@@ -80,6 +81,9 @@ Rules:
                    (optional-list? #(and (map? %) (text? (:title %))
                                          (or (nil? (:url %)) (text? (:url %)))) sources))
       (reject "The template needs a valid id, version, title, match and sources"))
+    ;; a car template without a make would be suggested for every car; only add-ons (LPG) match by fuel alone
+    (when-not (or addon (text? (:make match)))
+      (reject "A car template needs match.make (only an add-on template can match by fuel alone)"))
     (when-not (and (vector? items) (seq items)
                    (every? (partial valid-item? (count sources)) items)
                    (= (count items) (count (set (map :item items)))))

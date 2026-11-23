@@ -311,6 +311,12 @@ slices:
         given: []
         when: {type: template/import, text: "Here is the schedule: oil every 15 000 km"}
         then_error: invalid
+      - name: a car template without a make (it would be suggested for every car)
+        given: []
+        when: {type: template/import,
+               text: '{"template": "x", "version": 1, "title": {"en": "x"}, "match": {"fuels": ["petrol"]},
+                       "items": [{"item": "engine-oil", "title": {"en": "x"}, "every_km": 10000}]}'}
+        then_error: invalid
 
   - id: apply-schedule-template
     type: state-change
