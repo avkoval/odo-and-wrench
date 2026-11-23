@@ -98,6 +98,8 @@
   "photo-another": "Another photo",
   "photo-optional": "Photo (optional)",
   "place-label": "Garage / place",
+  "paste-template": "Paste template",
+  "paste-template-hint": "Give an AI chat the owner’s manual and the copied prompt, then paste its JSON answer.",
   "plate-label": "Number plate",
   "prompt-copied": "Prompt copied — paste it into an AI chat with the receipt photo",
   "read-as": "read as {km}",

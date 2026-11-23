@@ -1,0 +1,34 @@
+#+TITLE: Imported schedule template is missing from suggestions
+#+DATE: 2026-11-23
+
+Resolved on 2026-11-23. Template imports now append to the catalogue stream, and the
+suggestion projection combines imported events with bundled templates. The model check
+passes the original imported-template scenario and reports 26 of 26 slices implemented.
+
+* Goal
+
+Verify the model inventory for the market research report against the current checkout.
+
+* Setup and evidence
+
+=bb test= ran in =target/test-copy= with the project-pinned ClojureDart and Flutter 3.47.9.
+The working-tree model includes the new =import-schedule-template= slice. Fifteen tests passed.
+The model check failed in =template-suggestions=, scenario =a template imported from a manual is suggested like a shipped one=.
+Expected a suggestion for =skoda-octavia-a7-petrol=, version 1, for car =octavia=. Actual:
+
+#+begin_example
+got {:suggestions [], :car "octavia"}
+#+end_example
+
+* Findings and next check
+
+Compared the model with the registry and the app’s catalogue lookup. =import-schedule-template= is
+unregistered. The current suggestion path uses the bundled catalogue, which is consistent with the
+new scenario returning an empty list. No implementation change was made during market research.
+When implementing the template import slice, check that the suggestion projection combines imported
+catalogue events with the bundled data.
+
+* Done when
+
+=bb test= passes the imported-template suggestion scenario alongside the existing bundled-template
+scenarios, and the implemented slice count reflects the resulting registry.

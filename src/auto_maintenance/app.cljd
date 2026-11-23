@@ -3,6 +3,7 @@
   a screen changes anything: decide the command against the log, append the new events, then publish them."
   (:require ["package:flutter/services.dart" :as svc]
             [auto-maintenance.domain.decide :as d]
+            [auto-maintenance.domain.backup :as backup]
             [auto-maintenance.domain.json :as json]
             [auto-maintenance.domain.dates :as dates]
             [auto-maintenance.domain.views :as v]
@@ -22,9 +23,6 @@
     (if-some [f (first files)]
       (recur (rest files) (conj acc (json/read-str (await (.loadString svc/rootBundle (str "assets/templates/" f))))))
       acc)))
-
-(defn stream-of [command]
-  (if (= "settings" (namespace (:type command))) "settings" (:car command)))
 
 (defn settings [events] (v/settings (filter #(= "settings" (namespace (:type %))) events) nil))
 
@@ -51,7 +49,7 @@
   (try
     (let [events (d/handle @!events command)]
       (when (seq events)
-        (await (store/append! @!db (stream-of command) events))
+        (await (store/append! @!db (backup/stream-of (first events)) events))
         (swap! !events into events)
         (use-language!))
       nil)
@@ -80,9 +78,10 @@
 (defn schedule [events car] (v/schedule (car-events events car)))
 
 (defn template-suggestions [events car]
-  (v/template-suggestions (car-events events car) {:catalogue @!catalogue :language @i18n/!language}))
+  (v/template-suggestions (filter #(or (= car (:car %)) (= :template/imported (:type %))) events)
+    {:catalogue @!catalogue :language @i18n/!language}))
 
-(defn template [id] (some #(when (= id (:template %)) %) @!catalogue))
+(defn template [id] (get (v/template-catalogue @!catalogue @!events) id))
 
 (defn slug
   "An id from a name (\"Subaru Forester\" -> subaru-forester), unique among `taken`."

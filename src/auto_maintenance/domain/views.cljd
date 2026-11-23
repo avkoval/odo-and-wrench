@@ -252,7 +252,7 @@
         fuel-ok (or (empty? t-fuels) (some (set t-fuels) fuels))]
     (cond
       addon (when fuel-ok 1)
-      (not= (lower t-make) (lower make)) nil
+      (and t-make (not= (lower t-make) (lower make))) nil
       (and (seq t-models) (not-any? #(= (lower %) (lower model)) t-models)) nil
       (and year from (< year from)) nil
       (and year to (> year to)) nil
@@ -265,16 +265,21 @@
   [m language]
   (if (map? m) (or (get m (keyword language)) (get m :en) (first (vals m))) m))
 
+(defn template-catalogue [bundled events]
+  (reduce (fn [catalogue {:keys [template type] :as event}]
+            (if (= :template/imported type) (assoc catalogue template event) catalogue))
+    (into {} (map (juxt :template identity)) bundled) events))
+
 (defn template-suggestions
   "Catalogue templates that fit the car, best match first, add-ons last. `catalogue` is the app's template data
-  (D8), not events; titles in `language`."
+  (D8), combined with imported events; titles in `language`."
   [events {:keys [catalogue language]}]
   (let [car (last (of-type :car/registered events))
         language (or language "en")]
     {:car (:car car)
-     :suggestions (->> catalogue
+     :suggestions (->> (vals (template-catalogue catalogue events))
                     (keep (fn [t] (when-let [score (template-match t car)] [score t])))
-                    (sort-by (fn [[score t]] [(if (:addon t) 1 0) (- score)]))
+                    (sort-by (fn [[score t]] [(if (:addon t) 1 0) (- score) (:template t)]))
                     (mapv (fn [[_ {:keys [template version title]}]]
                             {:template template :version version :title (in-language title language)})))}))
 

@@ -3,7 +3,8 @@
   or rejects it with (ex-info msg {:category \"invalid\" | \"not-found\" | \"conflict\"}). Pure, no I/O."
   (:require [clojure.string :as str]
             [auto-maintenance.domain.views :as v]
-            [auto-maintenance.domain.receipt :as receipt]))
+            [auto-maintenance.domain.receipt :as receipt]
+            [auto-maintenance.domain.template :as template]))
 
 ;; ------------------------------------------------------------------ state
 
@@ -67,6 +68,7 @@
   [state event]
   (case (:type event)
     :settings/language-chosen (evolve-settings-language-chosen state event)
+    :template/imported (assoc-in state [:templates (:template event)] event)
     :default (evolve-default state event)
     :car/registered (evolve-car-registered state event)
     :schedule/item-defined (evolve-schedule-item-defined state event)
@@ -290,6 +292,13 @@
     :else [(merge {:type :reminder/sent}
              (present cmd [:car :item :kind :level :due_km :due_at :last_at :at :text]))]))
 
+(defn- decide-template-import [state {:keys [text]}]
+  (let [{:keys [template version] :as data} (template/parse text)
+        previous (get-in state [:templates template :version] 0)]
+    (when (<= version previous)
+      (reject "conflict" "An imported template with this id already has the same or a newer version"))
+    [(assoc data :type :template/imported :source "pasted")]))
+
 (defn decide
   "Turns a command into events or rejects it; `case` dispatch for the same hot-reload reason as `evolve`."
   [state command]
@@ -301,6 +310,7 @@
     :schedule/change-item (decide-schedule-change-item state command)
     :schedule/retire-item (decide-schedule-retire-item state command)
     :schedule/apply-template (decide-schedule-apply-template state command)
+    :template/import (decide-template-import state command)
     :reminder/send (decide-reminder-send state command)
     :odometer/record (decide-odometer-record state command)
     :odometer/correct (decide-odometer-correct state command)

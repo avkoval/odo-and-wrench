@@ -1,6 +1,6 @@
 title: |md
   # auto-maintenance: one car, left to right
-  25 slices — model/event-model.yaml is the full model
+  26 slices — model/event-model.yaml is the full model
 | {near: top-center}
 
 model: {
@@ -12,7 +12,7 @@ model: {
 
   l0: "Owner\n(screens)" {shape: text; style.font-size: 20}
   s_garage: "Add car\nphoto of VIN" {style.fill: "#FFFFFF"; shape: page}
-  s_sched: "Schedule\npick template (+ LPG), edit" {style.fill: "#FFFFFF"; shape: page}
+  s_sched: "Schedule\npick template (+ LPG), edit,\npaste template JSON" {style.fill: "#FFFFFF"; shape: page}
   s_cap: "Odometer\nphoto → confirm km" {style.fill: "#FFFFFF"; shape: page}
   s_issue: "To fix\nadd / withdraw" {style.fill: "#FFFFFF"; shape: page}
   s_log: "Log work\njobs, fixes, parts + labour,\npaste receipt JSON" {style.fill: "#FFFFFF"; shape: page}
@@ -24,7 +24,7 @@ model: {
 
   l1: "External" {shape: text; style.font-size: 20}
   x_vin: "VIN decoder\nJF1…8G… → Subaru 2008" {style.fill: "#FFF59D"}
-  x_tpl: "Template catalogue\n(app data)" {style.fill: "#FFF59D"}
+  x_tpl: "Template catalogue (app data)\n+ AI agent: manual → JSON" {style.fill: "#FFF59D"}
   x_ocr: "Camera +\nML Kit text recognition" {style.fill: "#FFF59D"}
   g1: "" {style.opacity: 0}
   x_ai: "AI agent\nreceipt photo → JSON" {style.fill: "#FFF59D"}
@@ -36,7 +36,7 @@ model: {
 
   l2: "Commands /\nRead models" {shape: text; style.font-size: 20}
   c_reg: "car/register" {style.fill: "#A7C7E7"}
-  c_def: "schedule/apply-template\ndefine / change / retire" {style.fill: "#A7C7E7"}
+  c_def: "template/import\nschedule/apply-template\ndefine / change / retire" {style.fill: "#A7C7E7"}
   c_odo: "odometer/record\n(km + recognized_km)" {style.fill: "#A7C7E7"}
   c_issue: "issue/report\nissue/withdraw" {style.fill: "#A7C7E7"}
   c_log: "maintenance/log\nmaintenance/import-receipt" {style.fill: "#A7C7E7"}
@@ -48,7 +48,7 @@ model: {
 
   l3: "car stream\n(events)" {shape: text; style.font-size: 20}
   e_reg: "car/registered\nVIN, plate, fuels" {style.fill: "#F5A65B"}
-  e_def: "schedule/item-defined" {style.fill: "#F5A65B"}
+  e_def: "schedule/item-defined\n(catalogue stream:\ntemplate/imported)" {style.fill: "#F5A65B"}
   e_odo: "odometer/recorded\nO-0001 129 400" {style.fill: "#F5A65B"}
   e_issue: "issue/reported\nI-0001" {style.fill: "#F5A65B"}
   e_log: "maintenance/performed\nparts, labor, fixes" {style.fill: "#F5A65B"}

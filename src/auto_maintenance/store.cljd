@@ -3,7 +3,8 @@
   or \"settings\"), kept as EDN text. Read models are rebuilt in memory from all events at start."
   (:require ["package:sqflite/sqflite.dart" :as sql]
             ["package:path/path.dart" :as path]
-            [cljd.edn :as edn]))
+            [cljd.edn :as edn]
+            [auto-maintenance.domain.backup :as backup]))
 
 (defn open! []
   (let [dir (await (sql/getDatabasesPath))]
@@ -36,5 +37,5 @@
              (await (.rawDelete txn "DELETE FROM events"))
              (doseq [e events]
                (await (.rawInsert txn "INSERT INTO events (stream, type, data) VALUES (?, ?, ?)"
-                        [(if (= "settings" (namespace (:type e))) "settings" (:car e))
+                        [(backup/stream-of e)
                          (subs (str (:type e)) 1) (pr-str e)])))))))

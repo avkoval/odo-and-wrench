@@ -13,6 +13,7 @@
 # Conventions of this model:
 #   - One stream per car (D1). Every event carries `car`; schedule items and diary entries live in the car's stream.
 #     App-wide preferences (language, reminder settings) live in one `settings` stream; their events carry no `car`.
+#     Schedule templates imported from manuals live in one `catalogue` stream (D21).
 #   - No server, so slices have no `route`; `screen` names the app screen.
 #   - Distances are whole kilometres, dates are ISO strings ("2026-11-21"), money is a decimal string plus currency.
 #   - IDs are ours, assigned once, never reused: cars by slug (transit, forester), diary entries M-0001, odometer
@@ -41,6 +42,8 @@ glossary:
   receipt lines: the parts and labour of a garage receipt on a diary entry — name, quantity, unit, price, sum (D17)
   receipt import: a receipt transcribed by an AI agent into the JSON format of docs/receipt-format.md and pasted
     into the app (D18)
+  template import: a schedule template made by an AI agent from the car's owner's manual in the format of
+    docs/template-format.md, pasted into the app and kept on the phone (D21)
   cost category: what money on a diary entry was spent for — service | repair | tyres | other (D12)
 
 slices:
@@ -213,10 +216,11 @@ slices:
   - id: template-suggestions
     type: state-view
     screen: schedule
-    # Matches the car's confirmed make/model/year/engine against the template catalogue (data shipped with the app,
-    # not events). Best match first; the owner can also pick any template or start empty.
+    # Matches the car's confirmed make/model/year/engine against the template catalogue: the templates shipped with
+    # the app (data, not events) plus those imported from manuals (template/imported, D21; an imported template
+    # replaces a shipped one with the same id). Best match first; the owner can also pick any template or start empty.
     read_model: template-suggestions
-    events: [car/registered]
+    events: [car/registered, template/imported]
     gt:
       - name: the Forester gets the SH-generation petrol template
         given:
@@ -231,11 +235,82 @@ slices:
         then: {car: forester, suggestions: [{template: subaru-forester-sh-petrol, version: 1},
                                             {template: lpg-system, version: 1,
                                              title: "LPG system (gas filters, reducer service)"}]}
+      - name: a template imported from a manual is suggested like a shipped one
+        given:
+          - {type: template/imported, template: skoda-octavia-a7-petrol, version: 1,
+             title: {en: "Škoda Octavia A7 (2013–2020), petrol", uk: "Škoda Octavia A7 (2013–2020), бензин"},
+             match: {make: "Škoda", models: [Octavia], years: [2013, 2020], fuels: [petrol]},
+             items: [{item: engine-oil, title: {en: "Engine oil + filter"}, every_km: 15000}]}
+          - {type: car/registered, car: octavia, vin: "TMBJJ7NE0F0000000", make: "Škoda", model: Octavia,
+             year: 2016, fuels: [petrol]}
+        then: {car: octavia, suggestions: [{template: skoda-octavia-a7-petrol, version: 1,
+                                            title: "Škoda Octavia A7 (2013–2020), petrol"}]}
       - name: no template for this car -> empty list, the owner defines items by hand
         given:
           - {type: car/registered, car: lada, vin: "XTA210990Y0000000", make: Lada, model: "2109", year: 2000,
              fuels: [petrol]}
         then: {car: lada, suggestions: []}
+
+  - id: import-schedule-template
+    type: translation
+    screen: schedule
+    # Adapter (D21): the owner gives any AI agent the car's owner's manual (PDF or photos of the maintenance pages)
+    # and the prompt the app copies (docs/template-format.md), and pastes the agent's JSON answer into Schedule ->
+    # Paste template. The JSON is the same format as the templates shipped with the app. It is checked (every item
+    # has an id, a title and an interval; integers; known fuels) and kept on the phone in the `catalogue` stream, so
+    # template-suggestions offers it to every matching car and backups include it. Applying it to a car is
+    # apply-schedule-template, as for a shipped template.
+    command: template/import
+    events: [template/imported]
+    gwt:
+      - name: a template made from the owner's manual is kept on the phone
+        given: []
+        when: {type: template/import,
+               text: '{"template": "skoda-octavia-a7-petrol", "version": 1,
+                       "title": {"en": "Škoda Octavia A7 (2013–2020), petrol", "uk": "Škoda Octavia A7 (2013–2020), бензин"},
+                       "addon": false,
+                       "match": {"make": "Škoda", "models": ["Octavia"], "years": [2013, 2020], "fuels": ["petrol"]},
+                       "sources": [{"title": "Owner''s manual, Service schedule, p. 212"}],
+                       "items": [{"item": "engine-oil", "title": {"en": "Engine oil + filter", "uk": "Моторна олива + фільтр"},
+                                  "every_km": 15000, "every_months": 12, "sources": [0]},
+                                 {"item": "timing-belt", "title": {"en": "Timing belt kit", "uk": "Комплект ГРМ"},
+                                  "every_km": 210000, "soon_km": 5000, "sources": [0]}]}'}
+        then: [{type: template/imported, template: skoda-octavia-a7-petrol, version: 1,
+                title: {en: "Škoda Octavia A7 (2013–2020), petrol", uk: "Škoda Octavia A7 (2013–2020), бензин"},
+                addon: false,
+                match: {make: "Škoda", models: [Octavia], years: [2013, 2020], fuels: [petrol]},
+                sources: [{title: "Owner's manual, Service schedule, p. 212"}],
+                items: [{item: engine-oil, title: {en: "Engine oil + filter", uk: "Моторна олива + фільтр"},
+                         every_km: 15000, every_months: 12, sources: [0]},
+                        {item: timing-belt, title: {en: "Timing belt kit", uk: "Комплект ГРМ"},
+                         every_km: 210000, soon_km: 5000, sources: [0]}],
+                source: pasted}]
+      - name: a newer version of the same template replaces it
+        given: [{type: template/imported, template: skoda-octavia-a7-petrol, version: 1, title: {en: x},
+                 match: {make: "Škoda"}, items: [{item: engine-oil, title: {en: x}, every_km: 15000}]}]
+        when: {type: template/import,
+               text: '{"template": "skoda-octavia-a7-petrol", "version": 2, "title": {"en": "x"},
+                       "match": {"make": "Škoda"},
+                       "items": [{"item": "engine-oil", "title": {"en": "x"}, "every_km": 10000}]}'}
+        then: [{type: template/imported, template: skoda-octavia-a7-petrol, version: 2}]
+      - name: the same or an older version again
+        given: [{type: template/imported, template: skoda-octavia-a7-petrol, version: 2, title: {en: x},
+                 match: {make: "Škoda"}, items: [{item: engine-oil, title: {en: x}, every_km: 10000}]}]
+        when: {type: template/import,
+               text: '{"template": "skoda-octavia-a7-petrol", "version": 2, "title": {"en": "x"},
+                       "match": {"make": "Škoda"},
+                       "items": [{"item": "engine-oil", "title": {"en": "x"}, "every_km": 10000}]}'}
+        then_error: conflict
+      - name: an item without an interval
+        given: []
+        when: {type: template/import,
+               text: '{"template": "x", "version": 1, "title": {"en": "x"}, "match": {"make": "Škoda"},
+                       "items": [{"item": "wipers", "title": {"en": "Wiper blades"}}]}'}
+        then_error: invalid
+      - name: text that is not a template in the format
+        given: []
+        when: {type: template/import, text: "Here is the schedule: oil every 15 000 km"}
+        then_error: invalid
 
   - id: apply-schedule-template
     type: state-change

@@ -32,7 +32,7 @@
   (let [events @app/!events
         files (await (photo-files))
         archive (zip/Archive)
-        name (str "auto-maintenance-" (dates/today) ".zip")]
+        name (str "odo-and-wrench-" (dates/today) ".zip")]
     (.add archive (zip/ArchiveFile.string "backup.json"
                     (json/write-str {:format b/format-version :app "auto-maintenance" :created (dates/today)
                                      :events (count events) :photos (count files)})))

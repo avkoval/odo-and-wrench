@@ -1,6 +1,6 @@
 # User guide
 
-auto-maintenance keeps the maintenance diary of your cars and shows what is due next. Everything stays on your phone:
+Odo & Wrench keeps the maintenance diary of your cars and shows what is due next. Everything stays on your phone:
 no account, no server. This guide describes version 0.2 (2026-11-23).
 
 > **Your data lives only in the app.** Uninstalling the app deletes it — export a backup now and then (Settings →
@@ -12,7 +12,7 @@ no account, no server. This guide describes version 0.2 (2026-11-23).
 1. Get `app-release.apk` (releases page, or `bb release` — see the [developer guide](developer-guide.md)).
 2. Copy it to the phone and open it; Android asks once to allow installs from that app (Files, browser).
    With USB debugging on: `adb install -r app-release.apk`.
-3. The app appears in the launcher as **Auto maintenance**.
+3. The app appears in the launcher as **Odo & Wrench**.
 
 ## Garage — your cars
 
@@ -60,6 +60,11 @@ The template screen lists each job with its interval and a note on where the num
 the bottom. Untick what your car does not need (e.g. the automatic-gearbox oil on a manual car) → **Add N jobs to the
 schedule**. Jobs the car already has stay as they are. New jobs start as *unknown*: tap each and enter when it was
 last done. Intervals were researched from public sources and are a starting point — change any of them (tap the job).
+
+For other cars, use **Paste template** in the Schedule section. Copy the prompt and give it to an AI chat with
+the relevant pages of the owner's manual. Paste the resulting JSON, then review the sources and intervals before
+adding any jobs. The template is saved on your phone, appears for matching cars, and is included in backups.
+See the [template format and prompt](template-format.md).
 
 ## Schedule — adding a job
 

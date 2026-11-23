@@ -43,6 +43,7 @@
    "due-list" {:project v/due-list}
    "template-suggestions" {:project (fn [events params]
                                       (v/template-suggestions events (assoc params :catalogue (catalogue-from-disk))))}
+   "import-schedule-template" {:decide d/handle}
    "apply-schedule-template" {:decide d/handle}
    "reminders-to-send" {:project v/reminders-to-send}
    "send-reminder" {:decide d/handle}})

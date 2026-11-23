@@ -15,6 +15,7 @@
             [auto-maintenance.domain.dates :as dates]
             [auto-maintenance.domain.odometer :as odometer]
             [auto-maintenance.domain.receipt :as receipt]
+            [auto-maintenance.domain.template :as template]
             [auto-maintenance.domain.views :as v]
             [auto-maintenance.domain.vin :as vin]))
 
@@ -167,7 +168,7 @@
       (when (seq sources)
         [(m/ListTile .dense true
            .title (m/Text (t :template-sources))
-           .subtitle (m/Text (str/join "\n" (map :url sources))))])
+           .subtitle (m/Text (str/join "\n" (map #(str/join " — " (remove str/blank? [(:title %) (:url %)])) sources))))])
       [(m/Padding
          .padding (m/EdgeInsets.all 8.0)
          .child (m/FilledButton
@@ -178,6 +179,58 @@
                                                :items (vec (filter #(picked (:item %)) items))})
                                  nil))
                   .child (m/Text (t :apply-template {:n (count picked)}))))])))
+
+(defn paste-template! [^m/BuildContext ctx car-id]
+  (let [id (await
+             (m/showDialog
+               .context ctx
+               .barrierDismissible false
+               .builder
+               (f/build
+                 :context dctx
+                 :managed [text (m/TextEditingController)
+                           !form (atom {}) :dispose nil]
+                 :watch [{:keys [busy error]} !form]
+                 (m/AlertDialog
+                   .title (m/Text (t :paste-template))
+                   .scrollable true
+                   .content (m/SizedBox
+                              .width 600.0
+                              .child (m/Column
+                                       .mainAxisSize m/MainAxisSize.min
+                                       .children [(m/Text (t :paste-template-hint))
+                                                  (field text "JSON")
+                                                  (when error (m/Text error))]))
+                   .actions [(m/TextButton
+                               .onPressed (fn []
+                                            (await (svc/Clipboard.setData
+                                                     (svc/ClipboardData .text (template/prompt))))
+                                            (when (.-mounted ctx) (snack! ctx (t :prompt-copied)))
+                                            nil)
+                               .child (m/Text (t :copy-prompt)))
+                             (m/TextButton
+                               .onPressed (when-not busy #(.pop (m/Navigator.of dctx)))
+                               .child (m/Text (t :cancel)))
+                             (m/FilledButton
+                               .onPressed
+                               (when-not busy
+                                 (fn []
+                                   (when-not (:busy @!form)
+                                     (reset! !form {:busy true})
+                                     (try
+                                       (let [input (text-of text)
+                                             tpl (template/parse input)
+                                             rejection (await (app/execute! {:type :template/import :text input}))]
+                                         (when (.-mounted dctx)
+                                           (if rejection
+                                             (reset! !form {:error (:message rejection)})
+                                             (.pop (m/Navigator.of dctx) (:template tpl)))))
+                                       (catch Object e
+                                         (reset! !form {:error (or (ex-message e) (str e))}))))
+                                   nil))
+                               .child (m/Text (t :use)))]))))]
+    (when (and id (.-mounted ctx))
+      (push! ctx (template-page car-id id)))))
 
 (defn template-tiles
   "Suggested templates (template-suggestions) that still have items the car does not track, for the Car screen."
@@ -720,7 +773,11 @@
            (m/Divider)]
       (issues-section ctx car-id (app/open-issues events car-id))
       [(m/Divider)
-       (heading (t :schedule))]
+       (heading (t :schedule))
+       (m/ListTile
+         .leading (m/Icon m/Icons.content_paste)
+         .title (m/Text (t :paste-template))
+         .onTap #(do (paste-template! ctx car-id) nil))]
       (template-tiles ctx car-id events)
       (if (empty? items)
         [(m/ListTile .title (m/Text (t :schedule-empty)))]
@@ -1001,7 +1058,7 @@
       :watch [events app/!events]
       :let [language (:language (app/settings events))]
       (m/MaterialApp
-        .title "Auto maintenance"
+        .title "Odo & Wrench"
         .locale (m/Locale language)
         .supportedLocales [(m/Locale "en") (m/Locale "uk")]
         .localizationsDelegates [fl/GlobalMaterialLocalizations.delegate

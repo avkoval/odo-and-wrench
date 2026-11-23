@@ -1,0 +1,87 @@
+(ns auto-maintenance.domain.template
+  "Validation of schedule templates pasted from an owner's manual (D21)."
+  (:require [clojure.string :as str]
+            [auto-maintenance.domain.json :as json]))
+
+(defn prompt []
+  "From the attached owner's manual, make the car's maintenance schedule as JSON, exactly in this shape and nothing else
+(no comments, no markdown):
+
+{\"template\": \"make-model-generation-fuel\", \"version\": 1,
+ \"title\": {\"en\": \"Make Model Generation (years), fuel\", \"uk\": \"the same in Ukrainian\"},
+ \"addon\": false,
+ \"match\": {\"make\": \"Make\", \"models\": [\"Model\"], \"years\": [2013, 2020], \"fuels\": [\"petrol\"], \"engines\": [\"1.4 TSI\"]},
+ \"note\": {\"en\": \"...\", \"uk\": \"...\"},
+ \"sources\": [{\"title\": \"Owner's manual, <section>, p. <page>\"}],
+ \"items\": [{\"item\": \"engine-oil\", \"title\": {\"en\": \"Engine oil + filter\", \"uk\": \"Моторна олива + фільтр\"},
+            \"every_km\": 15000, \"every_months\": 12, \"soon_km\": 1000,
+            \"note\": {\"en\": \"...\", \"uk\": \"...\"}, \"sources\": [0]}]}
+
+Rules:
+- One item per recurring job of the manual's maintenance schedule: engine oil and filter, air, cabin and fuel
+  filters, spark plugs, timing belt or chain, drive belt, coolant, brake fluid, gearbox / differential / transfer
+  case oils, power steering fluid, brake and suspension inspections, and anything else the manual schedules.
+  10–20 items; leave out one-off checks and wear parts without an interval.
+- \"every_km\" and/or \"every_months\" as whole numbers (convert miles to km and years to months). Every item needs at
+  least one of them. If the manual has a normal and a severe-conditions schedule, use the severe one (short trips,
+  dust, cold winters) and give the normal interval in \"note\".
+- \"soon_km\" / \"soon_days\" only where the job needs more notice than 1000 km / 30 days (e.g. a timing belt: 5000).
+- \"item\" ids: lowercase-with-hyphens; use these where they fit: engine-oil, air-filter, cabin-filter, fuel-filter,
+  spark-plugs, timing-belt, timing-chain, drive-belt, coolant, brake-fluid, gearbox-oil, atf,
+  front-differential-oil, rear-differential-oil, transfer-case-oil, power-steering-fluid, brake-inspection,
+  suspension-inspection.
+- \"template\": lowercase-with-hyphens from make, model, generation and fuel, e.g. \"skoda-octavia-a7-petrol\".
+- \"match\": the make and models as written on the car, the model years the manual covers, fuels from
+  petrol / diesel / lpg / electric / hybrid, and the engines it covers. Omit a key you cannot tell.
+- \"sources\": the manual's sections and pages the intervals come from; each item's \"sources\" are indexes into that
+  list. Copy the numbers from the manual; do not invent intervals the manual does not give.
+- Titles and notes in English (\"en\") and Ukrainian (\"uk\"), with the terms a Ukrainian garage uses.
+- Do not include personal data (owner name, VIN, plate, dealer stamps).")
+
+(defn- reject [message] (throw (ex-info message {:category "invalid"})))
+
+(defn- text? [x] (and (string? x) (not (str/blank? x))))
+
+(defn- slug? [x] (and (string? x) (re-matches #"[a-z0-9]+(?:-[a-z0-9]+)*" x)))
+
+(defn- positive-int? [x] (and (int? x) (pos? x)))
+
+(defn- localized? [x]
+  (and (map? x) (text? (:en x)) (every? text? (vals x))))
+
+(defn- optional-list? [pred xs]
+  (or (nil? xs) (and (vector? xs) (every? pred xs))))
+
+(defn- valid-match? [{:keys [make models years fuels engines] :as match}]
+  (and (map? match)
+       (or (nil? make) (text? make))
+       (optional-list? text? models)
+       (optional-list? text? engines)
+       (optional-list? #{"petrol" "diesel" "lpg" "electric" "hybrid"} fuels)
+       (or (nil? years)
+           (and (vector? years) (= 2 (count years))
+                (every? positive-int? years) (apply <= years)))))
+
+(defn- valid-item? [source-count {:keys [item title every_km every_months soon_km soon_days note sources] :as job}]
+  (and (map? job) (slug? item) (localized? title)
+       (or every_km every_months)
+       (every? positive-int? (remove nil? [every_km every_months soon_km soon_days]))
+       (or (nil? note) (localized? note))
+       (optional-list? #(and (int? %) (<= 0 %) (< % source-count)) sources)))
+
+(defn parse [text]
+  (let [data (try (json/read-str text)
+                  (catch Object _ (reject "Paste the schedule template as JSON")))
+        {:keys [template version title addon match note sources items]} data]
+    (when-not (and (map? data) (slug? template) (positive-int? version) (localized? title)
+                   (or (nil? addon) (boolean? addon))
+                   (or (nil? note) (localized? note))
+                   (valid-match? match)
+                   (optional-list? #(and (map? %) (text? (:title %))
+                                         (or (nil? (:url %)) (text? (:url %)))) sources))
+      (reject "The template needs a valid id, version, title, match and sources"))
+    (when-not (and (vector? items) (seq items)
+                   (every? (partial valid-item? (count sources)) items)
+                   (= (count items) (count (set (map :item items)))))
+      (reject "Every job needs a unique id, title and positive whole-number interval"))
+    (select-keys data [:template :version :title :addon :match :note :sources :items])))

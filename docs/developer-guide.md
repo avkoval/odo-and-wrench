@@ -1,6 +1,6 @@
 # Developer guide
 
-How auto-maintenance is designed, built and changed. Agents: also read [AGENTS.md](../AGENTS.md) (rules) and the open
+How Odo & Wrench is designed, built and changed. Agents: also read [AGENTS.md](../AGENTS.md) (rules) and the open
 issue files `*-issue.org` in the project root.
 
 ## Model first

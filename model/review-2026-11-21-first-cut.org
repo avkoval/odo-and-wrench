@@ -45,6 +45,13 @@ name, quantity, unit, price and sum; record them as they are, and paste a transc
 of typing; photos also from the gallery. New slice =import-receipt=; =log-maintenance=, =diary= and =costs-by-year=
 get scenarios for the lines. Decisions D17–D20 accepted 2026-11-22.
 
+* Changes after the fifth round (2026-11-23): templates from manuals
+
+From Oleksii: templates for other cars should come from their owner's manuals, through an AI agent, the same way as
+receipts: the app gives the format and a prompt, the owner sends the manual and the prompt to any AI chat, and pastes
+the answer back. New slice =import-schedule-template=; =template-suggestions= also reads imported templates.
+Decision D21 was approved for implementation on 2026-11-23.
+
 * What the app does, in one paragraph
 
 The owner adds a car by photographing its VIN (windscreen plate, door pillar or registration certificate); the app
@@ -265,6 +272,27 @@ Receipt, odometer, defect and VIN photos can be taken now or picked from the gal
 a screenshot of a PDF invoice). Adapter change only — events keep the photo path as before. Odometer and VIN text
 recognition run on gallery photos too.
 
+** ACCEPTED D21 Templates from owner's manuals: AI-made JSON pasted like a receipt
+- Format and prompt: [[file:../docs/template-format.md]] — the same JSON as the shipped templates
+  ([[file:../assets/templates/subaru-forester-sh-petrol.json]]), so one parser and one checker serve both. Why JSON:
+  the reasons of D18.
+- Screen, as for receipts (D18): Car → Schedule → /Paste template/ → dialog with /Copy prompt/, /Cancel/, /Use/ →
+  the template screen (jobs with intervals, notes, sources) → untick what does not apply → /Add N jobs/
+  (=apply-schedule-template=, unchanged).
+- =template/import= (translation slice) parses and checks the text (every item has an id, a title and an interval
+  in whole positive numbers) and records =template/imported= in a new =catalogue= stream. Kept on the phone, so the
+  template is suggested for every matching car (=template-suggestions= = shipped + imported; an imported template
+  with the id of a shipped one replaces it) and goes into the backup.
+- Versions: the same id again needs a higher =version= (an update from a newer manual or a better prompt run);
+  the same or an older version is rejected (=conflict=), so a double paste does nothing.
+- The prompt asks for the manual's severe-conditions intervals where there are two schedules, page references as
+  sources, English and Ukrainian titles, and no personal data.
+- Alternatives: (a) apply the pasted template to the one car only, keep nothing — simpler (no new event, no
+  stream), but the paste has to be repeated for a second car of the same type and it is not in the backup;
+  (b) the app sends the manual to an AI API itself — needs network, an API key and a privacy decision (as in D18:
+  later, not now).
+- Not in this step: deleting an imported template (a =template/withdrawn= event later if needed).
+
 * Open questions
 
 None. All decisions D1–D13 accepted on 2026-11-21; the model is approved for implementation.
@@ -277,6 +305,7 @@ Every screen field traces back to an event attribute, and every event attribute 
 |--------------------------------+-----------------------+----------------------------------------------+-------------------------------|
 | car name, plate, VIN, engine   | garage, car-by-plate  | car/registered                               | car/register (VIN decoder)    |
 | suggested templates            | template-suggestions  | car/registered make, model, year, engine     | catalogue (app data)          |
+| imported template, its items   | template-suggestions  | template/imported                            | template/import (AI agent)    |
 | current km, date               | mileage               | odometer/recorded km, at; corrected km       | odometer/record, /correct     |
 | km per day, predicted date     | mileage, due-list     | derived from readings                        | —                             |
 | item title, intervals, window  | due-list, diary       | schedule/item-defined, item-changed          | schedule/* commands, template |
@@ -318,6 +347,7 @@ Gaps, deliberately left out of the first cut:
 - [X] change-schedule-item
 - [X] retire-schedule-item
 - [X] template-suggestions
+- [X] import-schedule-template (D21), template-suggestions with imported templates
 - [X] apply-schedule-template
 - [X] record-odometer
 - [X] correct-odometer

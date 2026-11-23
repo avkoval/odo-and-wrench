@@ -8,7 +8,10 @@
 (def format-version 1)
 
 (defn stream-of [event]
-  (if (= "settings" (namespace (:type event))) "settings" (:car event)))
+  (case (namespace (:type event))
+    "settings" "settings"
+    "template" "catalogue"
+    (:car event)))
 
 (defn events->jsonl [events]
   (str/join "\n" (map json/write-str events)))

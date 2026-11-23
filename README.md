@@ -1,6 +1,6 @@
-# auto-maintenance
+# Odo & Wrench
 
-An Android app that keeps a maintenance diary for your cars and tells you what is due next. Written in
+An offline car maintenance log for Android that keeps a diary for your cars and tells you what is due next. Written in
 [ClojureDart](https://github.com/Tensegritics/ClojureDart) on Flutter, event-sourced, with all data on the phone.
 
 - **Cars** — added from a photo of the VIN or the registration certificate (the VIN is read on the phone and decoded
@@ -61,4 +61,8 @@ Documentation: [user guide](docs/user-guide.md), [developer guide](docs/develope
 
 ## License
 
-[MIT](LICENSE)
+Copyright © 2026 Oleksii Koval.
+
+The project source is licensed under the [GNU General Public License](LICENSE),
+version 3 or any later version (`GPL-3.0-or-later`).
+Third-party dependencies are governed by their own licenses and terms.
