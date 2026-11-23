@@ -95,14 +95,16 @@
                      ;; closed client socket (Broken pipe) and then no evaluation is ever acknowledged again (#364)
                      (.close sock))}
 
-  test {:doc "Run the tests, including the model check (no device). While `bb dev` runs (it holds REPL.lock), the
-              tests run in a synced copy under target/test-copy so both can work at once."
-        :task (if (repl-port)
-                (do (sh "mkdir -p target/test-copy")
-                    (sh (str "rsync -a --delete --exclude=/build --exclude=/target --exclude=/android --exclude=/linux"
-                             " --exclude=/REPL.lock --exclude=/.git ./ target/test-copy/"))
-                    (apply shell {:extra-env env :dir "target/test-copy"} "clojure -M:test:cljd test" *command-line-args*))
-                (apply sh "clojure -M:test:cljd test" *command-line-args*))}
+  test {:doc "Run the tests and model check in target/test-copy (no device needed)."
+        ;; Test compilation can emit imports of test libraries into lib/cljd-out.
+        ;; See 20261122-build-workarounds-issue.org.
+        ;; Hide generated Dart on the sender so --delete also clears old output in the copy.
+        :task (do (sh "mkdir -p target/test-copy")
+                  (sh (str "rsync -a --delete --exclude=/build --exclude=/target --exclude=/android --exclude=/linux"
+                           " --exclude=/REPL.lock --exclude=/.git --exclude=/.cpcache --exclude=/.clojuredart"
+                           " --exclude=/.dart_tool --exclude=/.flutter-plugins-dependencies"
+                           " --filter='hide /lib/cljd-out' --filter='hide /test/cljd-out' ./ target/test-copy/"))
+                  (apply shell {:extra-env env :dir "target/test-copy"} "clojure -M:test:cljd test" *command-line-args*))}
 
   apk {:doc "Build a debug APK: build/app/outputs/flutter-apk/app-debug.apk"
        :depends [compile]

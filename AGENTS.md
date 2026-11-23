@@ -15,7 +15,7 @@ system; its socket REPL port is in `REPL.lock`.
 2. Save the file; the watcher recompiles and hot-reloads. Hot reload updates function bodies but does NOT re-run
    top-level forms, so: no `defmulti`/`defmethod` (dispatch with `case`), no new top-level state that code needs —
    or evaluate that top-level form through the REPL.
-3. Finish with `bb test` (model check + unit tests, runs in `target/test-copy` while `bb dev` holds the lock).
+3. Finish with `bb test` (model check + unit tests, always runs in `target/test-copy`).
 
 Keeping the REPL alive (ClojureDart REPL is beta, ClojureDart#364): one thread in the watcher routes the app's
 output to the REPL clients and acknowledges each evaluation. If it writes to a client socket that is already closed,

@@ -59,7 +59,8 @@ money is a decimal string plus currency; corrections are new events (`odometer/c
   value); prints `model check: N/24 slices implemented`.
 - [test/auto_maintenance/odometer_test.cljd](../test/auto_maintenance/odometer_test.cljd) — number picking.
 
-While `bb dev` runs (it holds `REPL.lock`), `bb test` runs in a synced copy under `target/test-copy`.
+`bb test` always runs in a synced copy under `target/test-copy`. Test compilation writes to that copy,
+so you can run the tests while `bb dev` holds the root lock and keep generated test imports out of the app build.
 
 ## Implementing a slice
 
@@ -96,8 +97,8 @@ case are in [20261122-repl-issue.org](../20261122-repl-issue.org); the rules for
 
 ## Release builds
 
-`bb release` builds from a clean clone because of toolchain workarounds documented in
-[20261122-build-workarounds-issue.org](../20261122-build-workarounds-issue.org): the Flutter pin, test namespaces
-leaking into `lib/cljd-out`, R8 rules for ML Kit, and release lint switched off for a crash in `image_picker_android`.
+`bb release` builds the committed version from a clean clone of HEAD. The pinned Flutter SDK,
+R8 rules for ML Kit, and release lint settings are documented in
+[20261122-build-workarounds-issue.org](../20261122-build-workarounds-issue.org).
 The release APK is signed with the debug key (fine for installing on your own phone; a real signing key is needed for
 Google Play).

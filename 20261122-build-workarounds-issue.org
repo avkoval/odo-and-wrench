@@ -17,19 +17,24 @@ cause is fixed upstream. The ClojureDart REPL problem has its own file: [[file:2
 - Remove when: a ClojureDart release compiles with the current Flutter — then delete the pin from [[file:bb.edn]],
   restore the SDK constraint and update [[file:README.md]] / [[file:AGENTS.md]].
 
-* 2. Release builds need a clean clone (test namespaces leak into lib/cljd-out)
+* 2. ClojureDart test compilation emits imports of test namespaces into lib/cljd-out
 
 - Symptom: =flutter build apk --release= in the working folder fails: every file in =lib/cljd-out/= imports
   =../../../test/cljd-out/auto-maintenance/model-test_test.dart= (and =odometer-test_test.dart=), which a release
   build cannot resolve. Debug builds tolerate it. The imports appeared after =clojure -M:test:cljd test= had been run
-  in the working folder (before =bb test= moved to =target/test-copy=); ClojureDart's compiler state then keeps
-  injecting them.
+  in the working folder. A later =bb compile= leaves stale generated libraries on disk.
 - Upstream: probably related to [[https://github.com/tensegritics/ClojureDart/issues/380][ClojureDart#380]] ("rename-lib
   injects bogus imports when compiling test namespaces").
-- Workaround: =bb release= ([[file:bb.edn]]) clones HEAD into =target/release= and compiles there without the =:test=
-  alias. Note: it builds the *committed* state only.
-- Investigate: whether =clojure -M:cljd clean= in the working folder removes the leaked imports for good; a minimal
-  repro for #380.
+- =bb release= ([[file:bb.edn]]) still clones HEAD into =target/release= and compiles there without the =:test=
+  alias. It builds the *committed* state only.
+- Project fix (2026-11-23): =bb test= now always syncs sources into =target/test-copy=, even when no watcher is
+  running. The sync excludes generated Dart and tool caches, so the test task no longer writes generated test
+  imports into the working tree. =bb test= passed all four tests with the pinned SDK.
+- Compiler cause: in the pinned ClojureDart commit, =rename-lib= adds the renamed test library to every namespace's
+  import map, including maps that lacked the original import. The synced test build still exhibits this upstream
+  behaviour inside its own output directory.
+- Verified cleanup in a working-tree copy seeded with the stale imports: =clojure -M:cljd clean=, followed by
+  =bb compile=, cleared the imports and =flutter build apk --release= with the pinned SDK produced an APK.
 
 * 3. R8 missing classes from google_mlkit_text_recognition
 
