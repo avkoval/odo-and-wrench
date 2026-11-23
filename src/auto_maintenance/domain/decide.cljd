@@ -7,7 +7,8 @@
 
 ;; ------------------------------------------------------------------ state
 
-(def initial {:settings {:language "en"} :cars {} :plates {} :vins {} :items {} :readings {} :log {} :issues {} :entries {}})
+(def initial {:settings {:language "en"} :cars {} :plates {} :vins {} :items {} :readings {} :log {} :issues {} :entries {}
+              :reminded #{}})
 
 (defn- log-event
   "Every event of a car is also kept in its log, for rules that need a read model (current km)."
@@ -57,6 +58,9 @@
 (defn- evolve-settings-language-chosen [state {:keys [language]}]
   (assoc-in state [:settings :language] language))
 
+(defn- evolve-reminder-sent [state {:keys [car item level due_km due_at]}]
+  (cond-> state item (update :reminded conj [car item level due_km due_at])))
+
 (defn evolve
   "Applies one event to the state. Plain `case` dispatch (not a multimethod): hot reload updates function bodies
   but does not re-run top-level defmethod registrations."
@@ -73,6 +77,7 @@
     :issue/withdrawn (evolve-issue-withdrawn state event)
     :maintenance/performed (evolve-maintenance-performed state event)
     :maintenance/voided (evolve-maintenance-voided state event)
+    :reminder/sent (evolve-reminder-sent state event)
     state))
 
 (defn state-of [events] (reduce (fn [s e] (evolve (log-event s e) e)) initial events))
@@ -176,6 +181,22 @@
       []
       [(merge {:type :schedule/item-changed} (present cmd [:car :item :every_km :every_months :soon_km :soon_days :reason]))])))
 
+(defn- decide-schedule-apply-template [state {:keys [car template version items]}]
+  ;; the command carries the items as the owner saw them (D8); all of them are checked before any is defined
+  (require-car state car)
+  (cond
+    (or (str/blank? template) (empty? items)) (reject "invalid" "a template with items is required")
+    (some #(or (str/blank? (:item %)) (str/blank? (:title %))) items) (reject "invalid" "every item needs an id and a title")
+    (some #(and (nil? (:every_km %)) (nil? (:every_months %))) items)
+    (reject "invalid" "every item needs an interval in km or months")
+    (not-every? #(every? positive-or-absent? ((juxt :every_km :every_months :soon_km :soon_days) %)) items)
+    (reject "invalid" "intervals must be positive whole numbers"))
+  (vec (for [it items
+             :when (not (get-in state [:items [car (:item it)] :active]))]
+         (merge {:type :schedule/item-defined :car car}
+           (present it [:item :title :every_km :every_months :soon_km :soon_days])
+           (present {:template template :version version} [:template :version])))))
+
 (defn- decide-schedule-retire-item [state {:keys [car item] :as cmd}]
   (require-car state car)
   (require-active-item state car item)
@@ -260,6 +281,15 @@
       (str/blank? reason) (reject "invalid" "say why the entry is voided")))
   [(merge {:type :maintenance/voided} (present cmd [:car :entry :reason]))])
 
+(defn- decide-reminder-send [state {:keys [car item level due_km due_at] :as cmd}]
+  ;; one notification per item, level and due point (D9); odometer-stale reminders carry no item
+  (require-car state car)
+  (cond
+    (and item (not (#{"soon" "overdue"} level))) (reject "invalid" "level is soon or overdue")
+    (and item (contains? (:reminded state) [car item level due_km due_at])) []
+    :else [(merge {:type :reminder/sent}
+             (present cmd [:car :item :kind :level :due_km :due_at :last_at :at :text]))]))
+
 (defn decide
   "Turns a command into events or rejects it; `case` dispatch for the same hot-reload reason as `evolve`."
   [state command]
@@ -270,6 +300,8 @@
     :schedule/define-item (decide-schedule-define-item state command)
     :schedule/change-item (decide-schedule-change-item state command)
     :schedule/retire-item (decide-schedule-retire-item state command)
+    :schedule/apply-template (decide-schedule-apply-template state command)
+    :reminder/send (decide-reminder-send state command)
     :odometer/record (decide-odometer-record state command)
     :odometer/correct (decide-odometer-correct state command)
     :issue/report (decide-issue-report state command)

@@ -27,3 +27,14 @@
              (doseq [e events]
                (await (.rawInsert txn "INSERT INTO events (stream, type, data) VALUES (?, ?, ?)"
                         [stream (subs (str (:type e)) 1) (pr-str e)])))))))
+
+(defn replace-all!
+  "Restore (D7): deletes every event and appends `events` in their order, in one transaction."
+  [^sql/Database db events]
+  (await (.transaction db
+           (fn [^sql/Transaction txn]
+             (await (.rawDelete txn "DELETE FROM events"))
+             (doseq [e events]
+               (await (.rawInsert txn "INSERT INTO events (stream, type, data) VALUES (?, ?, ?)"
+                        [(if (= "settings" (namespace (:type e))) "settings" (:car e))
+                         (subs (str (:type e)) 1) (pr-str e)])))))))

@@ -1,24 +1,49 @@
 (ns auto-maintenance.app
   "The running app: the event log in memory (`!events`, loaded from the store at start) and `execute!`, the only way
   a screen changes anything: decide the command against the log, append the new events, then publish them."
-  (:require [auto-maintenance.domain.decide :as d]
+  (:require ["package:flutter/services.dart" :as svc]
+            [auto-maintenance.domain.decide :as d]
+            [auto-maintenance.domain.json :as json]
             [auto-maintenance.domain.dates :as dates]
             [auto-maintenance.domain.views :as v]
             [auto-maintenance.store :as store]
             [auto-maintenance.photos :as photos]
+            [auto-maintenance.i18n :as i18n]
             [clojure.string :as str]))
 
 (defonce !db (atom nil))
 (defonce !events (atom []))
+(defonce !catalogue (atom []))
+
+(defn- load-catalogue
+  "Schedule templates shipped with the app (D8): assets/templates/index.json lists the files."
+  []
+  (loop [files (json/read-str (await (.loadString svc/rootBundle "assets/templates/index.json"))) acc []]
+    (if-some [f (first files)]
+      (recur (rest files) (conj acc (json/read-str (await (.loadString svc/rootBundle (str "assets/templates/" f))))))
+      acc)))
 
 (defn stream-of [command]
   (if (= "settings" (namespace (:type command))) "settings" (:car command)))
 
+(defn settings [events] (v/settings (filter #(= "settings" (namespace (:type %))) events) nil))
+
+(defn- use-language! [] (reset! i18n/!language (:language (settings @!events))))
+
 (defn start! []
   (let [db (await (store/open!))]
     (await (photos/start!))
+    (await (i18n/load!))
+    (reset! !catalogue (await (load-catalogue)))
     (reset! !db db)
-    (reset! !events (await (store/load-all db)))))
+    (reset! !events (await (store/load-all db)))
+    (use-language!)))
+
+(defn reload!
+  "Reads the log again: the background reminder job (another isolate) may have appended reminder/sent events."
+  []
+  (when @!db
+    (reset! !events (await (store/load-all @!db)))))
 
 (defn execute!
   "Runs `command`; returns nil on success or {:category .. :message ..} when it is rejected."
@@ -27,7 +52,8 @@
     (let [events (d/handle @!events command)]
       (when (seq events)
         (await (store/append! @!db (stream-of command) events))
-        (swap! !events into events))
+        (swap! !events into events)
+        (use-language!))
       nil)
     (catch cljd.core/ExceptionInfo e
       (assoc (ex-data e) :message (ex-message e)))))
@@ -45,13 +71,18 @@
 
 (defn mileage [events car] (v/mileage (car-events events car) nil))
 
-(defn open-issues [events car] (v/open-issues (car-events events car) nil))
+(defn open-issues [events car] (v/open-issues (car-events events car) {:heading (i18n/t :to-fix-heading)}))
 
 (defn diary [events car] (v/diary (car-events events car) nil))
 
 (defn costs [events car] (v/costs-by-year (car-events events car) nil))
 
 (defn schedule [events car] (v/schedule (car-events events car)))
+
+(defn template-suggestions [events car]
+  (v/template-suggestions (car-events events car) {:catalogue @!catalogue :language @i18n/!language}))
+
+(defn template [id] (some #(when (= id (:template %)) %) @!catalogue))
 
 (defn slug
   "An id from a name (\"Subaru Forester\" -> subaru-forester), unique among `taken`."

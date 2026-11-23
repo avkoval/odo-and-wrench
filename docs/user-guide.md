@@ -1,28 +1,33 @@
 # User guide
 
 auto-maintenance keeps the maintenance diary of your cars and shows what is due next. Everything stays on your phone:
-no account, no server. This guide describes version 0.1 (2026-11-22).
+no account, no server. This guide describes version 0.2 (2026-11-23).
 
-> **Your data lives only in the app.** Uninstalling the app deletes it, and there is no backup or export yet. Update
-> the app by installing the new APK over the old one (`adb install -r …` or opening the APK) — that keeps the data.
+> **Your data lives only in the app.** Uninstalling the app deletes it — export a backup now and then (Settings →
+> **Export backup**). Update the app by installing the new APK over the old one (`adb install -r …` or opening the
+> APK) — that keeps the data.
 
 ## Install
 
 1. Get `app-release.apk` (releases page, or `bb release` — see the [developer guide](developer-guide.md)).
 2. Copy it to the phone and open it; Android asks once to allow installs from that app (Files, browser).
    With USB debugging on: `adb install -r app-release.apk`.
-3. The app appears in the launcher as **cljd_auto_maintenance**.
+3. The app appears in the launcher as **Auto maintenance**.
 
 ## Garage — your cars
 
 The start screen lists the cars with plate, last mileage and the most urgent job (coloured: red overdue, orange soon,
-green ok, grey unknown). Tap **+** to add a car:
+green ok, grey unknown). The **gear** icon opens the Settings. Tap **+** to add a car:
 
+- **Photo of the VIN or the registration certificate** (camera or gallery): the phone finds the 17-character VIN in
+  the photo and fills it in, with what can be read from it — the make always, the model and year for Japanese and
+  North American cars and for Ford Europe (e.g. a Transit). Several candidates are shown as chips; tap the right one.
+  Check every field: the photo only suggests.
 - **Name** (any), **VIN** (17 characters, letters I, O, Q are not allowed), **number plate** (spaces and Cyrillic
   look-alike letters are fine: `ка 5678 ві` is stored as `KA5678BI`), make, model, year, engine.
 - **Fuel** petrol or diesel, and **LPG** if the car has a gas system — LPG is never in the VIN, so tick it here.
 
-A VIN or a plate can belong to one car only. Reading the VIN from a photo comes later; type it for now.
+A VIN or a plate can belong to one car only. The VIN can also be typed.
 
 ## Car — what is due
 
@@ -43,6 +48,18 @@ The line under each job shows when it was last done, when it is due (km and date
 left and a predicted date from your average daily mileage over the last 90 days.
 
 Top bar: **gauge** = odometer reading, **wrench** = log work, **clock** = diary.
+
+## Schedule — from a template
+
+When the app has a schedule template for the car, the Car screen shows it above the schedule: *Suggested schedule:
+N jobs — tap to review*. Templates so far: Subaru Forester SH (2008–2013, petrol EJ20/EJ25), Ford Transit Mk7
+(2006–2014, 2.2/2.4 TDCi) and the **LPG system** add-on (gas filters every 8 000 km, reducer, injectors, diagnostics,
+tank) for any car with LPG.
+
+The template screen lists each job with its interval and a note on where the number comes from; the sources are at
+the bottom. Untick what your car does not need (e.g. the automatic-gearbox oil on a manual car) → **Add N jobs to the
+schedule**. Jobs the car already has stay as they are. New jobs start as *unknown*: tap each and enter when it was
+last done. Intervals were researched from public sources and are a starting point — change any of them (tap the job).
 
 ## Schedule — adding a job
 
@@ -120,10 +137,28 @@ a diary entry fixes the issue, or you withdraw it (**long-press** → reason, e.
   ```
 - **Copy** puts the same text into the clipboard.
 
+## Settings
+
+Garage → **gear**.
+
+- **Language** — English or Українська. Screens and notifications switch at once; what you typed (notes, names)
+  stays as written.
+- **Reminders** — on/off, the **time** and the **days** of the reminder, how early a job counts as *soon* (km and
+  days, used where the job has no own warning window) and after how many days without a reading the app asks for an
+  odometer photo. **Save reminder settings**; Android asks once whether the app may show notifications — allow it.
+- At the chosen time the app checks every car and sends one notification per job when it becomes *soon* and again
+  when it becomes *overdue* (not every day). Logging the job starts its next cycle. A car without a reading for the
+  set number of days gets "take an odometer photo". Android may deliver the check some minutes late to save battery.
+- **Check reminders now** — runs the same check at once (to try it out).
+
+### Backup
+
+- **Export backup** — makes a zip with all your data (events.jsonl) and photos and opens the share sheet: save it to
+  Files or Google Drive, or send it to yourself.
+- **Restore from backup** — pick such a zip; after you confirm, it **replaces** all data on this phone (use it on a
+  new phone, or to undo a mistake with an older backup).
+
 ## Not yet in this version
 
-- Reminder notifications (the settings for time, days and warning window exist in the model, the screen comes with
-  the notifications).
-- Ukrainian translation (English only for now).
-- Reading the VIN from a photo, and schedule templates per car type (incl. an LPG add-on template).
-- Backup / export of the data.
+- Templates for other cars (for now: Forester SH, Transit Mk7, LPG add-on); online VIN lookup.
+- Automatic backups (export is manual).

@@ -3,16 +3,21 @@
 An Android app that keeps a maintenance diary for your cars and tells you what is due next. Written in
 [ClojureDart](https://github.com/Tensegritics/ClojureDart) on Flutter, event-sourced, with all data on the phone.
 
-- **Cars** — added with their VIN, plate, engine and fuels (petrol, diesel, LPG).
+- **Cars** — added from a photo of the VIN or the registration certificate (the VIN is read on the phone and decoded
+  offline: make, and model and year where the VIN carries them), with plate, engine and fuels (petrol, diesel, LPG).
 - **Schedule** — recurring jobs per car (engine oil every 10 000 km or 12 months, LPG filters every 8 000 km), with
   the last time each was done. Status ok / soon / overdue / unknown, km left and a predicted date from your average
-  daily mileage.
+  daily mileage. Schedule templates by car type (Forester SH, Transit Mk7, LPG add-on), researched from public
+  sources with the sources listed.
 - **Odometer from a photo** — the camera and on-device text recognition (Google ML Kit) read the mileage; you confirm
   the number. The photo and the recognised number are kept.
-- **Diary** — what was done, when, at what km, with cost, place and receipt photo; per-year costs by category.
+- **Diary** — what was done, when, at what km, with cost, place and receipt photo; garage receipts with parts and
+  labour lines pasted as JSON from an AI chat; per-year costs by category and by parts / labour.
 - **To fix** — one-off defects (left turn signal, weak handbrake); share the list with the mechanic in one message;
   a garage visit that fixed them closes them.
-- Coming: reminder notifications at a time you choose, Ukrainian translation, schedule templates by car type.
+- **Reminders** — a notification at the time and on the days you choose when a job becomes soon or overdue, and when
+  a car needs a new odometer reading.
+- **English and Ukrainian**, **backup** to a zip (share to Files / Google Drive) and restore from it.
 
 ## How it is built
 

@@ -1,15 +1,22 @@
 (ns auto-maintenance.main
-  "Screens. They render read models and send commands through app/execute!; no business logic here."
+  "Screens. They render read models and send commands through app/execute!; no business logic here. Every text is
+  (t :key) from assets/l10n (D11)."
   (:require ["package:flutter/material.dart" :as m]
             ["package:flutter/services.dart" :as svc]
+            ["package:flutter_localizations/flutter_localizations.dart" :as fl]
             ["package:share_plus/share_plus.dart" :as share]
             [cljd.flutter :as f]
             [clojure.string :as str]
             [auto-maintenance.app :as app]
+            [auto-maintenance.backup :as backup]
+            [auto-maintenance.i18n :as i18n :refer [t]]
             [auto-maintenance.photos :as photos]
+            [auto-maintenance.reminders :as reminders]
             [auto-maintenance.domain.dates :as dates]
             [auto-maintenance.domain.odometer :as odometer]
-            [auto-maintenance.domain.receipt :as receipt]))
+            [auto-maintenance.domain.receipt :as receipt]
+            [auto-maintenance.domain.views :as v]
+            [auto-maintenance.domain.vin :as vin]))
 
 ;; ------------------------------------------------------------------ helpers
 
@@ -29,12 +36,16 @@
               .keyboardType (or keyboard m/TextInputType.text)
               .decoration (m/InputDecoration .labelText label .border (m/OutlineInputBorder))))))
 
-(defn show-error [ctx {:keys [message]}]
-  (.showSnackBar (m/ScaffoldMessenger.of ctx) (m/SnackBar .content (m/Text (str message)))))
+(defn snack! [ctx text]
+  (.showSnackBar (m/ScaffoldMessenger.of ctx) (m/SnackBar .content (m/Text (str text)))))
+
+(defn show-error [ctx {:keys [message]}] (snack! ctx message))
 
 (defn push! [ctx page]
   (.push (m/Navigator.of ctx) (#/(m/MaterialPageRoute Object) .builder (fn [_] page)))
   nil)
+
+(defn heading [text] (m/ListTile .title (m/Text text .style (m/TextStyle .fontWeight m/FontWeight.bold))))
 
 (defn photo!
   "Asks Camera or Gallery (D20), then returns the picked photo's temporary path, or nil."
@@ -46,10 +57,10 @@
                                      .child (m/Column
                                               .mainAxisSize m/MainAxisSize.min
                                               .children [(m/ListTile .leading (m/Icon m/Icons.photo_camera)
-                                                           .title (m/Text "Camera")
+                                                           .title (m/Text (t :camera))
                                                            .onTap #(.pop (m/Navigator.of bctx) "camera"))
                                                          (m/ListTile .leading (m/Icon m/Icons.photo_library)
-                                                           .title (m/Text "Gallery")
+                                                           .title (m/Text (t :gallery))
                                                            .onTap #(.pop (m/Navigator.of bctx) "gallery"))])))))]
     (when choice (await (photos/pick-photo! (= "camera" choice))))))
 
@@ -66,8 +77,12 @@
 
 (defn status-chip [status]
   (m/Chip
-    .label (m/Text (str status) .style (m/TextStyle .color m/Colors.white))
+    .label (m/Text (t (keyword (str "status-" status))) .style (m/TextStyle .color m/Colors.white))
     .backgroundColor (status-color status m/Colors.grey)))
+
+(defn interval-text [{:keys [every_km every_months]}]
+  (str/join " / " (remove nil? [(when every_km (t :every-km-short {:km every_km}))
+                                (when every_months (t :every-months-short {:months every_months}))])))
 
 ;; ------------------------------------------------------------------ add schedule item
 
@@ -84,18 +99,18 @@
               last-km (m/TextEditingController)
               last-at (m/TextEditingController .text (dates/today))]
     (m/Scaffold
-      .appBar (m/AppBar .title (m/Text "Add schedule item")))
+      .appBar (m/AppBar .title (m/Text (t :add-item-title))))
     .body
     (m/ListView .padding (m/EdgeInsets.all 16.0))
     .children
-    [(field title "Job, e.g. LPG filters")
-     (field every-km "Every … km" m/TextInputType.number)
-     (field every-months "Every … months" m/TextInputType.number)
-     (field soon-km "Warn … km before (optional)" m/TextInputType.number)
+    [(field title (t :job-label))
+     (field every-km (t :every-km-label) m/TextInputType.number)
+     (field every-months (t :every-months-label) m/TextInputType.number)
+     (field soon-km (t :soon-km-label) m/TextInputType.number)
      (m/Padding .padding (m/EdgeInsets.only .top 12.0 .bottom 4.0)
-       .child (m/Text "Last done (optional) — e.g. at installation, or from the service book"))
-     (field last-km "Last done at … km on the odometer" m/TextInputType.number)
-     (field last-at "Last done on (YYYY-MM-DD)")
+       .child (m/Text (t :last-done-hint)))
+     (field last-km (t :last-done-km-label) m/TextInputType.number)
+     (field last-at (t :last-done-at-label))
      (m/FilledButton
        .onPressed (fn []
                     (let [events @app/!events
@@ -111,10 +126,72 @@
                                                           :entry (app/next-id @app/!events :entry "M")
                                                           :at at :km (or km (:km (app/mileage events car)))
                                                           :items [item] :extra []
-                                                          :note "last done before it was tracked"}))))]
+                                                          :note (t :last-done-note)}))))]
                       (if error (show-error ctx error) (.pop (m/Navigator.of ctx))))
                     nil)
-       .child (m/Text "Save"))]))
+       .child (m/Text (t :save)))]))
+
+;; ------------------------------------------------------------------ schedule templates
+
+(defn template-page
+  "apply-schedule-template (D8): the template's items with their intervals; the owner unticks what the car does not
+  need. Items the car already has are kept as they are."
+  [car-id template-id]
+  (f/widget
+    :context ctx
+    :let [{:keys [title note sources] :as tpl} (app/template template-id)
+          items (v/template-items tpl @i18n/!language)
+          have (set (map :item (app/schedule @app/!events car-id)))]
+    :managed [!picked (atom (set (remove have (map :item items)))) :dispose nil]
+    :watch [picked !picked]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text (str (v/in-language title @i18n/!language)))))
+    .body
+    (m/ListView .padding (m/EdgeInsets.all 8.0))
+    .children
+    (concat
+      (when note [(m/ListTile .subtitle (m/Text (str (v/in-language note @i18n/!language))))])
+      (for [{:keys [item title note soon_km soon_days] :as it} items
+            :let [had (contains? have item)]]
+        (m/CheckboxListTile
+          .key (m/ValueKey item)
+          .value (or had (contains? picked item))
+          .onChanged (when-not had (fn [v] (swap! !picked (if v conj disj) item) nil))
+          .title (m/Text (str title))
+          .subtitle (m/Text (str/join "\n" (remove str/blank?
+                                             [(str (interval-text it)
+                                                (when soon_km (str " · " (t :warn-km-before {:km soon_km})))
+                                                (when soon_days (str " · " (t :warn-days-before {:days soon_days}))))
+                                              (when had (t :already-in-schedule))
+                                              note])))))
+      (when (seq sources)
+        [(m/ListTile .dense true
+           .title (m/Text (t :template-sources))
+           .subtitle (m/Text (str/join "\n" (map :url sources))))])
+      [(m/Padding
+         .padding (m/EdgeInsets.all 8.0)
+         .child (m/FilledButton
+                  .onPressed (when (seq picked)
+                               (fn []
+                                 (submit! ctx {:type :schedule/apply-template :car car-id
+                                               :template template-id :version (:version tpl)
+                                               :items (vec (filter #(picked (:item %)) items))})
+                                 nil))
+                  .child (m/Text (t :apply-template {:n (count picked)}))))])))
+
+(defn template-tiles
+  "Suggested templates (template-suggestions) that still have items the car does not track, for the Car screen."
+  [ctx car-id events]
+  (let [have (set (map :item (app/schedule events car-id)))]
+    (for [{:keys [template title]} (:suggestions (app/template-suggestions events car-id))
+          :let [missing (remove have (map :item (:items (app/template template))))]
+          :when (seq missing)]
+      (m/ListTile
+        .key (m/ValueKey (str "template-" template))
+        .leading (m/Icon m/Icons.playlist_add .color m/Colors.teal)
+        .title (m/Text (str title))
+        .subtitle (m/Text (t :template-suggested {:n (count missing)}))
+        .onTap #(push! ctx (template-page car-id template))))))
 
 ;; ------------------------------------------------------------------ odometer
 
@@ -127,7 +204,7 @@
               km (m/TextEditingController)]
     :watch [{:keys [photo candidates busy]} !shot]
     (m/Scaffold
-      .appBar (m/AppBar .title (m/Text "Odometer reading")))
+      .appBar (m/AppBar .title (m/Text (t :odometer-title))))
     .body
     (m/ListView .padding (m/EdgeInsets.all 16.0))
     .children
@@ -142,7 +219,7 @@
                           (when-some [best (first found)] (set! (.-text km) (str (:km best))))))
                       nil)
          .icon (m/Icon m/Icons.photo_camera)
-         .label (m/Text (if photo "Take another photo" "Photo of the odometer")))
+         .label (m/Text (if photo (t :photo-again) (t :odometer-photo))))
        (when photo
          (m/Padding .padding (m/EdgeInsets.symmetric .vertical 8.0)
            .child (m/Image.file (photos/file-of-tmp photo) .height 220.0 .fit m/BoxFit.contain)))
@@ -151,7 +228,7 @@
          (m/Wrap .spacing 8.0
            .children (for [{c :km} (take 5 candidates)]
                        (m/ActionChip .label (m/Text (str c)) .onPressed (fn [] (set! (.-text km) (str c)) nil)))))
-       (field km "km on the odometer" m/TextInputType.number)
+       (field km (t :odometer-km-label) m/TextInputType.number)
        (m/FilledButton
          .onPressed (fn []
                       (let [events @app/!events
@@ -167,7 +244,7 @@
                                         {:source "manual"}))]
                         (submit! ctx (into {} (filter (comp some? val)) command)))
                       nil)
-         .child (m/Text "Save"))])))
+         .child (m/Text (t :save)))])))
 
 (defn correct-dialog [ctx car-id {:keys [reading km]}]
   (m/showDialog
@@ -177,17 +254,17 @@
                :managed [new-km (m/TextEditingController .text (str km))
                          reason (m/TextEditingController)]
                (m/AlertDialog
-                 .title (m/Text (str "Correct " reading))
+                 .title (m/Text (t :correct-title {:reading reading}))
                  .content (m/Column .mainAxisSize m/MainAxisSize.min
-                            .children [(field new-km "km" m/TextInputType.number)
-                                       (field reason "Reason, e.g. misread 1 as 7")])
-                 .actions [(m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text "Cancel"))
+                            .children [(field new-km (t :km) m/TextInputType.number)
+                                       (field reason (t :correct-reason-label))])
+                 .actions [(m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text (t :cancel)))
                            (m/FilledButton
                              .onPressed (fn []
                                           (submit! dctx {:type :odometer/correct :car car-id :reading reading
                                                          :km (int-of new-km) :reason (text-of reason)})
                                           nil)
-                             .child (m/Text "Correct"))])))
+                             .child (m/Text (t :correct)))])))
   nil)
 
 (defn mileage-page [car-id]
@@ -196,13 +273,13 @@
     :watch [events app/!events]
     :let [{:keys [km km_at km_per_day readings]} (app/mileage events car-id)]
     (m/Scaffold
-      .appBar (m/AppBar .title (m/Text "Mileage")))
+      .appBar (m/AppBar .title (m/Text (t :mileage-title))))
     .body
     (m/ListView)
     .children
     (into [(m/ListTile
-             .title (m/Text (if km (str km " km on " km_at) "no readings yet"))
-             .subtitle (m/Text (if km_per_day (str "≈ " (.round ^num km_per_day) " km per day") "")))
+             .title (m/Text (if km (t :km-on-date {:km km :date km_at}) (t :no-readings)))
+             .subtitle (m/Text (if km_per_day (t :km-per-day {:km (.round ^num km_per_day)}) "")))
            (m/Divider)]
       (for [{:keys [reading at photo source recognized_km corrected_from reason] r-km :km :as r} readings]
         (m/ListTile
@@ -210,12 +287,12 @@
           .leading (if photo
                      (m/Image.file (photos/file-of photo) .width 56.0 .height 56.0 .fit m/BoxFit.cover)
                      (m/Icon m/Icons.edit_note))
-          .title (m/Text (str r-km " km  ·  " at))
-          .subtitle (m/Text (str/join " · " (remove nil? [reading source
+          .title (m/Text (str r-km " " (t :km) "  ·  " at))
+          .subtitle (m/Text (str/join " · " (remove nil? [reading (t (keyword (str "source-" source)))
                                                           (when (and recognized_km (not= recognized_km r-km))
-                                                            (str "read as " recognized_km))
+                                                            (t :read-as {:km recognized_km}))
                                                           (when corrected_from
-                                                            (str "corrected from " corrected_from ": " reason))])))
+                                                            (t :corrected-from {:km corrected_from :reason reason}))])))
           .onLongPress #(correct-dialog ctx car-id r))))))
 
 ;; ------------------------------------------------------------------ issues (things to fix)
@@ -229,16 +306,16 @@
               text (m/TextEditingController)]
     :watch [photo !photo]
     (m/Scaffold
-      .appBar (m/AppBar .title (m/Text "Something to fix")))
+      .appBar (m/AppBar .title (m/Text (t :issue-title))))
     .body
     (m/ListView .padding (m/EdgeInsets.all 16.0))
     .children
     (remove nil?
-      [(field text "What is broken, e.g. Left turn signal")
+      [(field text (t :issue-label))
        (m/OutlinedButton.icon
          .onPressed (fn [] (when-some [p (await (photo! ctx))] (reset! !photo p)) nil)
          .icon (m/Icon m/Icons.photo_camera)
-         .label (m/Text (if photo "Another photo" "Photo (optional)")))
+         .label (m/Text (if photo (t :photo-another) (t :photo-optional))))
        (when photo
          (m/Padding .padding (m/EdgeInsets.symmetric .vertical 8.0)
            .child (m/Image.file (photos/file-of-tmp photo) .height 200.0 .fit m/BoxFit.contain)))
@@ -251,7 +328,7 @@
                                        photo (assoc :photo (await (photos/keep! photo car-id
                                                                     (str today "-" issue ".jpg")))))))
                       nil)
-         .child (m/Text "Save"))])))
+         .child (m/Text (t :save)))])))
 
 (defn withdraw-dialog [ctx car-id {:keys [issue text]}]
   (m/showDialog
@@ -260,41 +337,41 @@
                :context dctx
                :managed [reason (m/TextEditingController)]
                (m/AlertDialog
-                 .title (m/Text (str "Withdraw: " text))
-                 .content (field reason "Why, e.g. fixed it myself")
-                 .actions [(m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text "Cancel"))
+                 .title (m/Text (t :withdraw-title {:text text}))
+                 .content (field reason (t :withdraw-reason-label))
+                 .actions [(m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text (t :cancel)))
                            (m/FilledButton
                              .onPressed (fn []
                                           (submit! dctx {:type :issue/withdraw :car car-id :issue issue
                                                          :reason (text-of reason)})
                                           nil)
-                             .child (m/Text "Withdraw"))])))
+                             .child (m/Text (t :withdraw)))])))
   nil)
 
 (defn copy-message! [ctx message]
   (await (svc/Clipboard.setData (svc/ClipboardData .text message)))
-  (.showSnackBar (m/ScaffoldMessenger.of ctx) (m/SnackBar .content (m/Text "Copied — paste it to the mechanic")))
+  (snack! ctx (t :copied-for-mechanic))
   nil)
 
 (defn issues-section
   "Open issues of the car with Add / Share / Copy, for the Car screen."
   [ctx car-id {:keys [issues message]}]
   (into [(m/ListTile
-           .title (m/Text "To fix" .style (m/TextStyle .fontWeight m/FontWeight.bold))
+           .title (m/Text (t :to-fix) .style (m/TextStyle .fontWeight m/FontWeight.bold))
            .trailing (m/Row
                        .mainAxisSize m/MainAxisSize.min
                        .children (remove nil?
                                    [(when message
-                                      (m/IconButton .icon (m/Icon m/Icons.share) .tooltip "Share with the mechanic"
+                                      (m/IconButton .icon (m/Icon m/Icons.share) .tooltip (t :share-with-mechanic)
                                         .onPressed #(do (.share share/SharePlus.instance (share/ShareParams .text message))
                                                         nil)))
                                     (when message
-                                      (m/IconButton .icon (m/Icon m/Icons.copy) .tooltip "Copy the list"
+                                      (m/IconButton .icon (m/Icon m/Icons.copy) .tooltip (t :copy-list)
                                         .onPressed #(copy-message! ctx message)))
-                                    (m/IconButton .icon (m/Icon m/Icons.add_circle_outline) .tooltip "Something to fix"
+                                    (m/IconButton .icon (m/Icon m/Icons.add_circle_outline) .tooltip (t :issue-title)
                                       .onPressed #(push! ctx (add-issue-page car-id)))])))]
     (if (empty? issues)
-      [(m/ListTile .dense true .title (m/Text "Nothing to fix"))]
+      [(m/ListTile .dense true .title (m/Text (t :nothing-to-fix)))]
       (for [{:keys [issue at text photo] :as i} issues]
         (m/ListTile
           .key (m/ValueKey issue)
@@ -302,12 +379,14 @@
                      (m/Image.file (photos/file-of photo) .width 48.0 .height 48.0 .fit m/BoxFit.cover)
                      (m/Icon m/Icons.build .color m/Colors.orange))
           .title (m/Text (str text))
-          .subtitle (m/Text (str issue " · since " at " · long-press to withdraw"))
+          .subtitle (m/Text (t :issue-subtitle {:issue issue :date at}))
           .onLongPress #(withdraw-dialog ctx car-id i))))))
 
 ;; ------------------------------------------------------------------ diary
 
 (def categories ["service" "repair" "tyres" "other"])
+
+(defn category-label [c] (t (keyword (str "category-" c))))
 
 (defn paste-receipt-dialog
   "D18: paste the JSON an AI agent made from the receipt photo; returns the parsed receipt plus its text, or nil."
@@ -318,12 +397,12 @@
                :context dctx
                :managed [text (m/TextEditingController)]
                (m/AlertDialog
-                 .title (m/Text "Paste receipt")
+                 .title (m/Text (t :paste-receipt-title))
                  .content (m/SizedBox
                             .width 600.0
                             .child (m/Column
                                      .mainAxisSize m/MainAxisSize.min
-                                     .children [(m/Text "Give an AI chat the receipt photo and the prompt (Copy prompt), then paste its JSON answer here.")
+                                     .children [(m/Text (t :paste-receipt-hint))
                                                 (m/SizedBox .height 8.0)
                                                 (m/TextField .controller text .maxLines 8 .minLines 4
                                                   .decoration (m/InputDecoration .hintText "{\"date\": …}"
@@ -331,11 +410,10 @@
                  .actions [(m/TextButton
                              .onPressed (fn []
                                           (await (svc/Clipboard.setData (svc/ClipboardData .text receipt/prompt)))
-                                          (.showSnackBar (m/ScaffoldMessenger.of ctx)
-                                            (m/SnackBar .content (m/Text "Prompt copied — paste it into an AI chat with the receipt photo")))
+                                          (snack! ctx (t :prompt-copied))
                                           nil)
-                             .child (m/Text "Copy prompt"))
-                           (m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text "Cancel"))
+                             .child (m/Text (t :copy-prompt)))
+                           (m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text (t :cancel)))
                            (m/FilledButton
                              .onPressed (fn []
                                           (try
@@ -344,7 +422,7 @@
                                             (catch cljd.core/ExceptionInfo e
                                               (show-error ctx {:message (ex-message e)})))
                                           nil)
-                             .child (m/Text "Use"))]))))
+                             .child (m/Text (t :use)))]))))
 
 (defn receipt-card
   "The pasted receipt as it will be saved: its lines and totals."
@@ -355,9 +433,10 @@
              .child (m/Column
                       .crossAxisAlignment m/CrossAxisAlignment.start
                       .children (concat
-                                  [(m/Text (str "Receipt " (or order_no "") " · " at " · " km " km · " (or place ""))
+                                  [(m/Text (str (t :receipt) " " (or order_no "") " · " at " · " km " " (t :km)
+                                             " · " (or place ""))
                                      .style (m/TextStyle .fontWeight m/FontWeight.bold))]
-                                  (for [[label ls] [["Parts" parts] ["Labour" labor]] :when (seq ls)]
+                                  (for [[label ls] [[(t :parts) parts] [(t :labour) labor]] :when (seq ls)]
                                     (m/Column
                                       .crossAxisAlignment m/CrossAxisAlignment.start
                                       .children (cons (m/Padding .padding (m/EdgeInsets.only .top 6.0)
@@ -365,7 +444,7 @@
                                                   (for [{:keys [name qty unit price sum]} ls]
                                                     (m/Text (str name " — " qty " " unit " × " price " = " sum))))))
                                   [(m/Padding .padding (m/EdgeInsets.only .top 6.0)
-                                     .child (m/Text (str "Total " total " " currency)
+                                     .child (m/Text (str (t :total) " " total " " currency)
                                               .style (m/TextStyle .fontWeight m/FontWeight.bold)))])))))
 
 (defn log-entry-page
@@ -388,7 +467,7 @@
               place (m/TextEditingController)]
     :watch [{:keys [items fixes category photo receipt]} !form]
     (m/Scaffold
-      .appBar (m/AppBar .title (m/Text "Log work")))
+      .appBar (m/AppBar .title (m/Text (t :log-work))))
     .body
     (m/ListView .padding (m/EdgeInsets.all 16.0))
     .children
@@ -399,14 +478,14 @@
                         (swap! !form assoc :receipt r :category "repair"))
                       nil)
          .icon (m/Icon m/Icons.content_paste)
-         .label (m/Text (if receipt "Paste another receipt" "Paste receipt (JSON from an AI chat)")))]
+         .label (m/Text (if receipt (t :paste-another-receipt) (t :paste-receipt))))]
       (if receipt
         [(receipt-card receipt)
-         (m/TextButton .onPressed #(do (swap! !form assoc :receipt nil) nil) .child (m/Text "Remove the receipt"))]
-        [(field at "Date (YYYY-MM-DD)")
-         (field km "km" m/TextInputType.number)])
+         (m/TextButton .onPressed #(do (swap! !form assoc :receipt nil) nil) .child (m/Text (t :remove-receipt)))]
+        [(field at (t :date-label))
+         (field km (t :km) m/TextInputType.number)])
       (when (seq jobs)
-        (cons (m/Padding .padding (m/EdgeInsets.only .top 8.0) .child (m/Text "Scheduled jobs done"))
+        (cons (m/Padding .padding (m/EdgeInsets.only .top 8.0) .child (m/Text (t :jobs-done)))
           (for [{:keys [item title]} jobs]
             (m/CheckboxListTile
               .key (m/ValueKey item)
@@ -414,7 +493,7 @@
               .title (m/Text (str title))
               .onChanged (fn [v] (swap! !form update :items (if v conj disj) item) nil)))))
       (when (seq open)
-        (cons (m/Padding .padding (m/EdgeInsets.only .top 8.0) .child (m/Text "Issues fixed"))
+        (cons (m/Padding .padding (m/EdgeInsets.only .top 8.0) .child (m/Text (t :issues-fixed)))
           (for [{:keys [issue text]} open]
             (m/CheckboxListTile
               .key (m/ValueKey issue)
@@ -422,21 +501,22 @@
               .title (m/Text (str text))
               .onChanged (fn [v] (swap! !form update :fixes (if v conj disj) issue) nil)))))
       [(m/TextField .controller extra .maxLines nil .minLines 2
-         .decoration (m/InputDecoration .labelText "Other work, one per line" .border (m/OutlineInputBorder)))
-       (field note "Note, e.g. Castrol 5W-30, 6.2 l")
+         .decoration (m/InputDecoration .labelText (t :other-work-label) .border (m/OutlineInputBorder)))
+       (field note (t :note-label))
        (m/Row .children [(m/Expanded .child (if receipt
-                                              (m/Text (str "Cost " (:total receipt) " " (:currency receipt) " (from the receipt)"))
-                                              (field cost "Cost, UAH" m/TextInputType.number)))
+                                              (m/Text (t :cost-from-receipt {:total (:total receipt)
+                                                                             :currency (:currency receipt)}))
+                                              (field cost (t :cost-label) m/TextInputType.number)))
                          (m/SizedBox .width 12.0)
                          (m/DropdownButton
                            .value category
-                           .items (for [c categories] (m/DropdownMenuItem .value c .child (m/Text c)))
+                           .items (for [c categories] (m/DropdownMenuItem .value c .child (m/Text (category-label c))))
                            .onChanged (fn [v] (swap! !form assoc :category v) nil))])
-       (if receipt (m/SizedBox .height 0.0) (field place "Garage / place"))
+       (if receipt (m/SizedBox .height 0.0) (field place (t :place-label)))
        (m/OutlinedButton.icon
          .onPressed (fn [] (when-some [p (await (photo! ctx))] (swap! !form assoc :photo p)) nil)
          .icon (m/Icon m/Icons.receipt_long)
-         .label (m/Text (if photo "Another receipt photo" "Receipt photo (optional)")))
+         .label (m/Text (if photo (t :receipt-photo-another) (t :receipt-photo))))
        (m/FilledButton
          .onPressed (fn []
                       (let [events @app/!events
@@ -452,18 +532,18 @@
                                           :fixes (when (seq fixes) (vec (filter fixes (map :issue open))))
                                           :category category :photos photos}
                                          {:type :maintenance/log :car car-id :entry entry :at date :km (int-of km)
-                                        :items (vec (filter items (map :item jobs)))
-                                        :extra (vec (remove str/blank? (map str/trim (str/split-lines (.-text extra)))))
-                                        :fixes (when (seq fixes) (vec (filter fixes (map :issue open))))
-                                        :note (blank->nil (text-of note))
-                                        :cost (when cost-text (str (or (some-> (double/tryParse cost-text) (.toStringAsFixed 2))
-                                                                       cost-text)))
-                                        :currency (when cost-text "UAH")
-                                        :category (when cost-text category)
-                                        :place (blank->nil (text-of place))
-                                        :photos photos}))))
+                                          :items (vec (filter items (map :item jobs)))
+                                          :extra (vec (remove str/blank? (map str/trim (str/split-lines (.-text extra)))))
+                                          :fixes (when (seq fixes) (vec (filter fixes (map :issue open))))
+                                          :note (blank->nil (text-of note))
+                                          :cost (when cost-text (str (or (some-> (double/tryParse cost-text) (.toStringAsFixed 2))
+                                                                         cost-text)))
+                                          :currency (when cost-text "UAH")
+                                          :category (when cost-text category)
+                                          :place (blank->nil (text-of place))
+                                          :photos photos}))))
                       nil)
-         .child (m/Text "Save"))])))
+         .child (m/Text (t :save)))])))
 
 (defn void-dialog [ctx car-id {:keys [entry at]}]
   (m/showDialog
@@ -472,15 +552,15 @@
                :context dctx
                :managed [reason (m/TextEditingController)]
                (m/AlertDialog
-                 .title (m/Text (str "Void " entry " of " at "?"))
-                 .content (field reason "Why, e.g. logged for the wrong car")
-                 .actions [(m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text "Cancel"))
+                 .title (m/Text (t :void-title {:entry entry :date at}))
+                 .content (field reason (t :void-reason-label))
+                 .actions [(m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text (t :cancel)))
                            (m/FilledButton
                              .onPressed (fn []
                                           (submit! dctx {:type :maintenance/void :car car-id :entry entry
                                                          :reason (text-of reason)})
                                           nil)
-                             .child (m/Text "Void"))])))
+                             .child (m/Text (t :void)))])))
   nil)
 
 (defn costs-page [car-id]
@@ -488,30 +568,32 @@
     :watch [events app/!events]
     :let [{:keys [years]} (app/costs events car-id)]
     (m/Scaffold
-      .appBar (m/AppBar .title (m/Text "Costs")))
+      .appBar (m/AppBar .title (m/Text (t :costs))))
     .body
     (m/ListView)
     .children
     (if (empty? years)
-      [(m/ListTile .title (m/Text "No costs yet — add a cost when you log work"))]
+      [(m/ListTile .title (m/Text (t :no-costs)))]
       (for [{:keys [year currency total by_category by_kind]} years]
         (m/ListTile
           .key (m/ValueKey (str year currency))
           .isThreeLine true
           .title (m/Text (str year ": " total " " currency))
-          .subtitle (m/Text (str (str/join " · " (for [c categories :let [v (get by_category c)] :when v] (str c " " v)))
+          .subtitle (m/Text (str (str/join " · " (for [c categories :let [v (get by_category c)] :when v]
+                                                   (str (category-label c) " " v)))
                               "\n"
-                              (str/join " · " (for [[k label] [["parts" "parts"] ["labor" "labour"] ["other" "other"]]
+                              (str/join " · " (for [[k label] [["parts" :parts] ["labor" :labour] ["other" :other]]
                                                     :let [v (get by_kind k)] :when v]
-                                                (str label " " v))))))))))
+                                                (str (t label) " " v))))))))))
 
 (defn entry-subtitle [{:keys [titles extra fixed note cost currency category place parts labor order_no]}]
   (str/join "\n" (remove str/blank? [(str/join ", " (concat titles extra))
                                       (when (or (seq parts) (seq labor))
-                                        (str (when order_no (str "receipt " order_no ": "))
-                                          (count parts) " parts, " (count labor) " labour lines — tap to see"))
-                                      (when (seq fixed) (str "fixed: " (str/join ", " fixed)))
-                                      (str/join " · " (remove nil? [(when cost (str cost " " currency " (" category ")"))
+                                        (t :receipt-lines {:receipt (if order_no (str (t :receipt) " " order_no ": ") "")
+                                                           :parts (count parts) :labour (count labor)}))
+                                      (when (seq fixed) (t :fixed-list {:list (str/join ", " fixed)}))
+                                      (str/join " · " (remove nil? [(when cost (str cost " " currency
+                                                                                 " (" (category-label category) ")"))
                                                                     place note]))])))
 
 (defn diary-page [car-id]
@@ -521,23 +603,23 @@
     :let [{:keys [entries]} (app/diary events car-id)]
     (m/Scaffold
       .appBar (m/AppBar
-                .title (m/Text "Diary")
-                .actions [(m/IconButton .icon (m/Icon m/Icons.payments) .tooltip "Costs"
+                .title (m/Text (t :diary))
+                .actions [(m/IconButton .icon (m/Icon m/Icons.payments) .tooltip (t :costs)
                             .onPressed #(push! ctx (costs-page car-id)))])
       .floatingActionButton (m/FloatingActionButton.extended
                               .onPressed #(push! ctx (log-entry-page car-id))
                               .icon (m/Icon m/Icons.build)
-                              .label (m/Text "Log work")))
+                              .label (m/Text (t :log-work))))
     .body
     (m/ListView)
     .children
     (if (empty? entries)
-      [(m/ListTile .title (m/Text "Nothing logged yet — tap Log work; past work from the service book too"))]
+      [(m/ListTile .title (m/Text (t :diary-empty)))]
       (for [{:keys [entry at km] :as e} entries]
         (m/ListTile
           .key (m/ValueKey entry)
           .isThreeLine true
-          .title (m/Text (str at "  ·  " km " km"))
+          .title (m/Text (str at "  ·  " km " " (t :km)))
           .subtitle (m/Text (entry-subtitle e))
           .onTap (when (or (seq (:parts e)) (seq (:labor e)))
                    #(do (m/showDialog .context ctx
@@ -568,10 +650,10 @@
     .body
     (m/ListView .padding (m/EdgeInsets.all 16.0))
     .children
-    [(field km "Every … km" m/TextInputType.number)
-     (field months "Every … months" m/TextInputType.number)
-     (field soon "Warn … km before (optional)" m/TextInputType.number)
-     (field reason "Reason, e.g. city driving, short trips (optional)")
+    [(field km (t :every-km-label) m/TextInputType.number)
+     (field months (t :every-months-label) m/TextInputType.number)
+     (field soon (t :soon-km-label) m/TextInputType.number)
+     (field reason (t :change-reason-label))
      (m/FilledButton
        .onPressed (fn []
                     (submit! ctx (into {} (filter (comp some? val))
@@ -579,12 +661,12 @@
                                     :every_km (int-of km) :every_months (int-of months) :soon_km (int-of soon)
                                     :reason (blank->nil (text-of reason))}))
                     nil)
-       .child (m/Text "Save intervals"))
+       .child (m/Text (t :save-intervals)))
      (m/SizedBox .height 12.0)
      (m/OutlinedButton.icon
        .onPressed #(push! ctx (log-entry-page car-id item-id))
        .icon (m/Icon m/Icons.history)
-       .label (m/Text "Record when it was last done"))
+       .label (m/Text (t :record-last-done)))
      (m/SizedBox .height 24.0)
      (m/OutlinedButton.icon
        .onPressed (fn []
@@ -593,17 +675,17 @@
                                     :reason (blank->nil (text-of reason))}))
                     nil)
        .icon (m/Icon m/Icons.delete_outline)
-       .label (m/Text "Stop tracking this job (history stays in the diary)"))]))
+       .label (m/Text (t :stop-tracking)))]))
 
 ;; ------------------------------------------------------------------ car
 
 (defn due-subtitle [{:keys [due_km due_at remaining_km predicted_at last_km last_at status]}]
   (if (= "unknown" status)
-    "never done — tap to enter when it was last done"
-    (str/join " · " (remove nil? [(when last_km (str "done " last_km " km, " last_at))
-                                  (when due_km (str "due " due_km " km"))
-                                  (when remaining_km (str remaining_km " km left"))
-                                  (when due_at (str "by " due_at))
+    (t :never-done)
+    (str/join " · " (remove nil? [(when last_km (t :done-at {:km last_km :date last_at}))
+                                  (when due_km (t :due-km {:km due_km}))
+                                  (when remaining_km (t :km-left {:km remaining_km}))
+                                  (when due_at (t :due-by {:date due_at}))
                                   (when predicted_at (str "≈ " predicted_at))]))))
 
 (defn car-page [car-id]
@@ -616,15 +698,15 @@
     (m/Scaffold
       .appBar (m/AppBar
                 .title (m/Text (str (:name car)))
-                .actions [(m/IconButton .icon (m/Icon m/Icons.speed) .tooltip "Odometer reading"
+                .actions [(m/IconButton .icon (m/Icon m/Icons.speed) .tooltip (t :odometer-title)
                             .onPressed #(push! ctx (odometer-page car-id)))
-                          (m/IconButton .icon (m/Icon m/Icons.build) .tooltip "Log work"
+                          (m/IconButton .icon (m/Icon m/Icons.build) .tooltip (t :log-work)
                             .onPressed #(push! ctx (log-entry-page car-id)))
-                          (m/IconButton .icon (m/Icon m/Icons.history) .tooltip "Diary"
+                          (m/IconButton .icon (m/Icon m/Icons.history) .tooltip (t :diary)
                             .onPressed #(push! ctx (diary-page car-id)))])
       .floatingActionButton (m/FloatingActionButton
                               .onPressed #(push! ctx (add-item-page car-id))
-                              .tooltip "Add schedule item"
+                              .tooltip (t :add-item-title)
                               .child (m/Icon m/Icons.add)))
     .body
     (m/ListView)
@@ -632,15 +714,16 @@
     (concat
       [(m/ListTile
              .title (m/Text (str (:plate car) "  ·  " (:make car) " " (:model car) " " (:year car)))
-             .subtitle (m/Text (if km (str km " km on " km_at) "no odometer reading yet — tap the gauge above"))
+             .subtitle (m/Text (if km (t :km-on-date {:km km :date km_at}) (t :no-reading-yet)))
              .trailing (m/Icon m/Icons.chevron_right)
              .onTap #(push! ctx (mileage-page car-id)))
            (m/Divider)]
       (issues-section ctx car-id (app/open-issues events car-id))
       [(m/Divider)
-       (m/ListTile .title (m/Text "Schedule" .style (m/TextStyle .fontWeight m/FontWeight.bold)))]
+       (heading (t :schedule))]
+      (template-tiles ctx car-id events)
       (if (empty? items)
-        [(m/ListTile .title (m/Text "No schedule yet — tap + to add a job"))]
+        [(m/ListTile .title (m/Text (t :schedule-empty)))]
         (for [{:keys [item title status] :as it} items]
           (m/ListTile
             .key (m/ValueKey item)
@@ -651,59 +734,225 @@
 
 ;; ------------------------------------------------------------------ add car
 
-(defn add-car-page []
+(defn add-car-page
+  "register-car (D10): a photo of the VIN (windscreen, door pillar or registration certificate) fills the VIN and what
+  the decoder reads from it; the owner confirms or completes the rest."
+  []
   (f/widget
     :context ctx
-    :managed [!choice (atom {:fuel "petrol" :lpg false}) :dispose nil
+    :managed [!choice (atom {:fuel "petrol" :lpg false :decoded nil :photo nil :found [] :busy false}) :dispose nil
               name (m/TextEditingController)
-              vin (m/TextEditingController)
+              vin-text (m/TextEditingController)
               plate (m/TextEditingController)
               make (m/TextEditingController)
               model (m/TextEditingController)
               year (m/TextEditingController)
               engine (m/TextEditingController)]
-    :watch [{:keys [fuel lpg]} !choice]
+    :watch [{:keys [fuel lpg decoded photo found busy]} !choice]
+    :let [use-vin! (fn [v]
+                     (let [d (vin/decode v (.-year (DateTime/now)))]
+                       (set! (.-text vin-text) v)
+                       (doseq [[k ^m/TextEditingController c] [[:make make] [:model model] [:year year]]
+                               :when (and (get d k) (str/blank? (.-text c)))]
+                         (set! (.-text c) (str (get d k))))
+                       (when (and (str/blank? (.-text name)) (:make d))
+                         (set! (.-text name) (str/join " " (remove nil? [(:make d) (:model d)]))))
+                       (swap! !choice assoc :decoded d)))]
     (m/Scaffold
-      .appBar (m/AppBar .title (m/Text "Add car")))
+      .appBar (m/AppBar .title (m/Text (t :add-car))))
     .body
     (m/ListView .padding (m/EdgeInsets.all 16.0))
     .children
-    [(field name "Name, e.g. Subaru Forester")
-     (field vin "VIN (17 characters)")
-     (field plate "Number plate")
-     (field make "Make")
-     (field model "Model")
-     (field year "Year" m/TextInputType.number)
-     (field engine "Engine, e.g. EJ20 2.0 petrol")
-     (m/Row
-       .children
-       [(m/Text "Fuel: ")
-        (m/DropdownButton
-          .value fuel
-          .items [(m/DropdownMenuItem .value "petrol" .child (m/Text "petrol"))
-                  (m/DropdownMenuItem .value "diesel" .child (m/Text "diesel"))]
-          .onChanged (fn [v] (swap! !choice assoc :fuel v) nil))
-        (m/Spacer)
-        (m/Text "LPG")
-        (m/Switch .value lpg .onChanged (fn [v] (swap! !choice assoc :lpg v) nil))])
-     (m/FilledButton
-       .onPressed (fn []
-                    (let [taken (map :car (:cars (app/garage @app/!events)))]
-                      (submit! ctx {:type :car/register
-                                    :car (app/slug (text-of name) taken) :name (text-of name)
-                                    :vin (str/upper-case (text-of vin)) :plate (blank->nil (text-of plate))
-                                    :make (blank->nil (text-of make)) :model (blank->nil (text-of model))
-                                    :year (int-of year) :engine (blank->nil (text-of engine))
-                                    :fuels (cond-> [fuel] lpg (conj "lpg"))}))
-                    nil)
-       .child (m/Text "Save"))]))
+    (remove nil?
+      [(m/FilledButton.icon
+         .onPressed (fn []
+                      (when-some [path (await (photo! ctx))]
+                        (swap! !choice assoc :photo path :busy true)
+                        (let [vins (vin/candidates (map :text (await (photos/recognize-lines path))))]
+                          (swap! !choice assoc :found vins :busy false)
+                          (if-some [v (first vins)]
+                            (use-vin! v)
+                            (snack! ctx (t :vin-not-found)))))
+                      nil)
+         .icon (m/Icon m/Icons.photo_camera)
+         .label (m/Text (t :vin-photo)))
+       (when busy (m/LinearProgressIndicator))
+       (when (next found)
+         (m/Wrap .spacing 8.0
+           .children (for [v (take 4 found)]
+                       (m/ActionChip .label (m/Text v) .onPressed (fn [] (use-vin! v) nil)))))
+       (when (seq decoded)
+         (m/Text (t :vin-decoded {:what (str/join ", " (map str (vals decoded)))})))
+       (field vin-text (t :vin-label))
+       (field name (t :car-name-label))
+       (field plate (t :plate-label))
+       (field make (t :make-label))
+       (field model (t :model-label))
+       (field year (t :year-label) m/TextInputType.number)
+       (field engine (t :engine-label))
+       (m/Row
+         .children
+         [(m/Text (str (t :fuel) ": "))
+          (m/DropdownButton
+            .value fuel
+            .items [(m/DropdownMenuItem .value "petrol" .child (m/Text (t :fuel-petrol)))
+                    (m/DropdownMenuItem .value "diesel" .child (m/Text (t :fuel-diesel)))]
+            .onChanged (fn [v] (swap! !choice assoc :fuel v) nil))
+          (m/Spacer)
+          (m/Text (t :fuel-lpg))
+          (m/Switch .value lpg .onChanged (fn [v] (swap! !choice assoc :lpg v) nil))])
+       (m/FilledButton
+         .onPressed (fn []
+                      (let [taken (map :car (:cars (app/garage @app/!events)))
+                            car (app/slug (text-of name) taken)]
+                        (submit! ctx (into {} (filter (comp some? val))
+                                       {:type :car/register
+                                        :car car :name (text-of name)
+                                        :vin (str/upper-case (text-of vin-text)) :plate (blank->nil (text-of plate))
+                                        :make (blank->nil (text-of make)) :model (blank->nil (text-of model))
+                                        :year (int-of year) :engine (blank->nil (text-of engine))
+                                        :fuels (cond-> [fuel] lpg (conj "lpg"))
+                                        :decoded (when (seq decoded) decoded)
+                                        :photo (when photo (await (photos/keep! photo car "vin.jpg")))})))
+                      nil)
+         .child (m/Text (t :save)))])))
+
+;; ------------------------------------------------------------------ settings
+
+(def weekdays ["mon" "tue" "wed" "thu" "fri" "sat" "sun"])
+
+(defn restore-dialog [ctx {:keys [info events photos] :as b}]
+  (m/showDialog
+    .context ctx
+    .builder (fn [dctx]
+               (m/AlertDialog
+                 .title (m/Text (t :restore-title))
+                 .content (m/Text (t :restore-confirm {:date (:created info) :events (count events)
+                                                       :photos (count photos) :now (count @app/!events)}))
+                 .actions [(m/TextButton .onPressed #(do (.pop (m/Navigator.of dctx)) nil) .child (m/Text (t :cancel)))
+                           (m/FilledButton
+                             .onPressed (fn []
+                                          (await (backup/restore! b))
+                                          (await (reminders/schedule-next!))
+                                          (.pop (m/Navigator.of dctx))
+                                          (snack! ctx (t :restored {:events (count events)}))
+                                          nil)
+                             .child (m/Text (t :restore)))])))
+  nil)
+
+(defn settings-page []
+  (f/widget
+    :context ctx
+    :let [s (app/settings @app/!events)]
+    :managed [!form (atom (select-keys s [:language :notify_at :days :enabled])) :dispose nil
+              soon-km (m/TextEditingController .text (str (:soon_km s)))
+              soon-days (m/TextEditingController .text (str (:soon_days s)))
+              stale-days (m/TextEditingController .text (str (:stale_days s)))]
+    :watch [{:keys [language notify_at days enabled]} !form]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text (t :settings))))
+    .body
+    (m/ListView .padding (m/EdgeInsets.all 8.0))
+    .children
+    [(heading (t :language))
+     (m/Padding
+       .padding (m/EdgeInsets.symmetric .horizontal 16.0)
+       .child (m/DropdownButton
+                .value language
+                .items [(m/DropdownMenuItem .value "en" .child (m/Text "English"))
+                        (m/DropdownMenuItem .value "uk" .child (m/Text "Українська"))]
+                .onChanged (fn [v]
+                             (swap! !form assoc :language v)
+                             (when-some [error (await (app/execute! {:type :settings/choose-language :language v}))]
+                               (show-error ctx error))
+                             nil)))
+     (m/Divider)
+     (heading (t :reminders))
+     (m/SwitchListTile
+       .title (m/Text (t :reminders-on))
+       .value enabled
+       .onChanged (fn [v] (swap! !form assoc :enabled v) nil))
+     (m/ListTile
+       .title (m/Text (t :notify-at))
+       .trailing (m/Text notify_at .style (m/TextStyle .fontSize 18.0))
+       .onTap (fn []
+                (let [[h mi] (map #(int/parse %) (str/split notify_at #":"))]
+                  (when-some [^m/TimeOfDay picked (await (m/showTimePicker .context ctx
+                                                           .initialTime (m/TimeOfDay .hour h .minute mi)))]
+                    (swap! !form assoc :notify_at (str (.padLeft (str (.-hour picked)) 2 "0") ":"
+                                                    (.padLeft (str (.-minute picked)) 2 "0")))))
+                nil))
+     (m/Padding
+       .padding (m/EdgeInsets.symmetric .horizontal 16.0)
+       .child (m/Wrap
+                .spacing 6.0
+                .children (for [d weekdays]
+                            (m/FilterChip
+                              .label (m/Text (t (keyword (str "day-" d))))
+                              .selected (contains? (set days) d)
+                              .onSelected (fn [on]
+                                            (swap! !form update :days
+                                              (fn [ds] (filterv (if on (conj (set ds) d) (disj (set ds) d)) weekdays)))
+                                            nil)))))
+     (m/Padding
+       .padding (m/EdgeInsets.symmetric .horizontal 16.0)
+       .child (m/Column
+                .children [(field soon-km (t :soon-km-setting) m/TextInputType.number)
+                           (field soon-days (t :soon-days-setting) m/TextInputType.number)
+                           (field stale-days (t :stale-days-setting) m/TextInputType.number)]))
+     (m/Padding
+       .padding (m/EdgeInsets.symmetric .horizontal 16.0)
+       .child (m/FilledButton
+                .onPressed (fn []
+                             (let [error (await (app/execute! {:type :settings/configure-reminders
+                                                               :notify_at notify_at :days days :enabled enabled
+                                                               :soon_km (int-of soon-km) :soon_days (int-of soon-days)
+                                                               :stale_days (int-of stale-days)}))]
+                               (if error
+                                 (show-error ctx error)
+                                 (do (when enabled (await (reminders/request-permission!)))
+                                     (await (reminders/schedule-next!))
+                                     (snack! ctx (t :saved)))))
+                             nil)
+                .child (m/Text (t :save-reminders))))
+     (m/ListTile
+       .leading (m/Icon m/Icons.notifications_active)
+       .title (m/Text (t :check-now))
+       .subtitle (m/Text (t :check-now-hint))
+       .onTap (fn []
+                (await (reminders/request-permission!))
+                (let [n (await (reminders/send-due!))]
+                  (snack! ctx (t :reminders-sent {:n n})))
+                nil))
+     (m/Divider)
+     (heading (t :backup))
+     (m/ListTile
+       .leading (m/Icon m/Icons.upload_file)
+       .title (m/Text (t :export))
+       .subtitle (m/Text (t :export-hint))
+       .onTap (fn []
+                (try (await (backup/export!))
+                  (catch Object e (snack! ctx (str e))))
+                nil))
+     (m/ListTile
+       .leading (m/Icon m/Icons.restore)
+       .title (m/Text (t :restore))
+       .subtitle (m/Text (t :restore-hint))
+       .onTap (fn []
+                (try
+                  (when-some [b (await (backup/pick!))]
+                    (restore-dialog ctx b))
+                  (catch cljd.core/ExceptionInfo e (snack! ctx (ex-message e)))
+                  (catch Object e (snack! ctx (str e))))
+                nil))]))
 
 ;; ------------------------------------------------------------------ garage
 
 (defn garage-subtitle [{:keys [plate km most_urgent]}]
   (str/join " · " (remove nil? [plate
-                                (when km (str km " km"))
-                                (when most_urgent (str (:title most_urgent) ": " (:status most_urgent)))])))
+                                (when km (str km " " (t :km)))
+                                (when most_urgent (str (:title most_urgent) ": "
+                                                    (t (keyword (str "status-" (:status most_urgent))))))])))
 
 (def garage-page
   (f/widget
@@ -711,16 +960,19 @@
     :watch [events app/!events]
     :let [{:keys [cars]} (app/garage events)]
     (m/Scaffold
-      .appBar (m/AppBar .title (m/Text "Garage"))
+      .appBar (m/AppBar
+                .title (m/Text (t :garage))
+                .actions [(m/IconButton .icon (m/Icon m/Icons.settings) .tooltip (t :settings)
+                            .onPressed #(push! ctx (settings-page)))])
       .floatingActionButton (m/FloatingActionButton
                               .onPressed #(push! ctx (add-car-page))
-                              .tooltip "Add car"
+                              .tooltip (t :add-car)
                               .child (m/Icon m/Icons.add)))
     .body
     (m/ListView)
     .children
     (if (empty? cars)
-      [(m/ListTile .title (m/Text "Garage is empty — tap + to add a car"))]
+      [(m/ListTile .title (m/Text (t :garage-empty)))]
       (for [{:keys [car name most_urgent] :as c} cars]
         (m/ListTile
           .key (m/ValueKey car)
@@ -732,16 +984,33 @@
 
 ;; ------------------------------------------------------------------ main
 
+(defonce !lifecycle (atom nil))
+
 (defn main []
   (m/WidgetsFlutterBinding.ensureInitialized)
   (await (app/start!))
+  ;; the background reminder job may have appended events while the app was in the background
+  (reset! !lifecycle (m/AppLifecycleListener .onResume (fn [] (app/reload!) nil)))
+  (try
+    (when (:enabled (app/settings @app/!events))
+      (await (reminders/request-permission!)))
+    (await (reminders/schedule-next!))
+    (catch Object e (println "reminders not scheduled:" e)))
   (f/run
-    (m/MaterialApp
-      .title "Auto maintenance"
-      .theme (m/ThemeData .colorSchemeSeed m/Colors.teal))
-    .home
-    garage-page))
+    (f/widget
+      :watch [events app/!events]
+      :let [language (:language (app/settings events))]
+      (m/MaterialApp
+        .title "Auto maintenance"
+        .locale (m/Locale language)
+        .supportedLocales [(m/Locale "en") (m/Locale "uk")]
+        .localizationsDelegates [fl/GlobalMaterialLocalizations.delegate
+                                 fl/GlobalWidgetsLocalizations.delegate
+                                 fl/GlobalCupertinoLocalizations.delegate]
+        .theme (m/ThemeData .colorSchemeSeed m/Colors.teal))
+      .home
+      garage-page)))
 
-(comment 
+(comment
   (count @auto-maintenance.app/!events)
 )

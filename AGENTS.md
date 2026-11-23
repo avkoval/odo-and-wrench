@@ -53,7 +53,7 @@ Before starting work, read the open `*-issue.org` files — the problem you hit 
 
 ## Model first
 
-The approved model is [model/event-model.yaml](model/event-model.yaml); decisions D1–D13 are in
+The approved model is [model/event-model.yaml](model/event-model.yaml); decisions D1–D20 are in
 [model/review-2026-11-21-first-cut.org](model/review-2026-11-21-first-cut.org). New behaviour is first a slice in the
 model with scenarios, reviewed by the user (skill `event-model`), then implemented (skill `es-slice`). When code and
 a scenario disagree, find which one is wrong and ask; an approved scenario is the contract.
@@ -64,8 +64,8 @@ a scenario disagree, find which one is wrong and ask; an approved scenario is th
 - `src/auto_maintenance/slices.cljd` — registry of implemented slices: `{:decide (fn [given-events command])}` for
   state changes, `{:project (fn [events params])}` for read models. Domain code has no Flutter imports.
 - `test/auto_maintenance/model_test.cljd` — the model check: runs every scenario of every registered slice and
-  prints `model check: N/21 slices implemented`. A slice is done when it is registered and its scenarios pass.
-- `lib/main.dart` only re-exports the compiled main; `lib/cljd-out/` and `test/cljd-out/` are build output.
+  prints `model check: N/25 slices implemented`. A slice is done when it is registered and its scenarios pass.
+- `lib/main.dart` is the Dart entry point: the reminder job's `callbackDispatcher`, then the compiled `main`; `lib/cljd-out/` and `test/cljd-out/` are build output.
 
 ## Tooling rules
 

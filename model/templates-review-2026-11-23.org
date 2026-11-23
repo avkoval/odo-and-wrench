@@ -1,0 +1,177 @@
+#+TITLE: Schedule templates — review of the researched intervals
+#+DATE: 2026-11-23
+
+Review note for decision D8 ([[file:review-2026-11-21-first-cut.org]]): the three schedule templates were researched
+from public sources and wait for the owner's review before use. Each item in the JSON files carries its own note and
+source indexes; this file summarises the choices, the places where sources disagreed and the open questions.
+
+Files:
+- [[file:../assets/templates/subaru-forester-sh-petrol.json]] — 16 items, 9 sources
+- [[file:../assets/templates/ford-transit-mk7-diesel.json]] — 14 items, 6 sources
+- [[file:../assets/templates/lpg-system.json]] — 6 items, 6 sources (add-on)
+
+"Soon window" is empty where the app default (1000 km / 30 days) is enough. Every interval is "whichever comes
+first".
+
+* Subaru Forester SH (2008–2013), petrol EJ20 / EJ25
+
+Main source: the European owner's manual schedule as transcribed on
+[[https://ivangrigoryev.com/en/maintenance-schedule-subaru-forester/][ivangrigoryev.com]] — the table has a separate
+column for "CIS and Israel" (timing belt, cabin filter), which is used as the closer match for Ukraine. Cross-checked
+with [[https://www.zr.ru/content/articles/804695-subaru-forester-iii-i-v-les-i-v-goroda/][Za Rulem]] (Forester III
+used-car review), [[https://www.subaru.ca/content/7907/Media/General/webimage/500k/2012_maintenanceposter_EN.pdf][Subaru
+Canada 2012+ poster]], [[https://www.subaru.ca/content/7907/Media/General/webimage/500k/500K_NA_1990-2009_H4_MaintGuide_EN.pdf][Subaru
+Canada 1990–2009 H4 guide]], [[https://www.importcarparts.co.uk/icp-subaru-recommended-service-schedule-impreza-legacy-forester/][ICP
+(UK Subaru parts specialist)]], [[https://gmb.net/blog/subaru-forester-timing-belt-problems/][GMB]] (timing belt kit),
+[[https://en.wikipedia.org/wiki/Subaru_FB_engine][Wikipedia: Subaru FB engine]] and the
+[[https://www.manualsdir.com/manuals/746538/subaru-2010-forester.html?page=338][2010 Forester owner's manual p. 338]].
+
+| Item                          | Interval              | Soon window     | Why / sources                                                    |
+|-------------------------------+-----------------------+-----------------+------------------------------------------------------------------|
+| engine-oil                    | 10 000 km / 12 mo     |                 | Maker 15 000 / 12 (Europe); severe use → shorter; ZR             |
+| air-filter                    | 15 000 km / 12 mo     |                 | Maker replace 30 000 / 24, more often on dusty roads             |
+| cabin-filter                  | 12 000 km / 12 mo     |                 | Maker CIS column 12 000 / 12                                     |
+| fuel-filter                   | 75 000 km / 60 mo     |                 | Maker Europe, unchanged                                          |
+| spark-plugs                   | 105 000 km / 84 mo    |                 | Maker (iridium); ICP 100 000; shorten on LPG (see LPG section)   |
+| timing-belt (+ tensioner, idlers, water pump) | 105 000 km / 84 mo | 5000 km / 60 d | Maker CIS 105 000; Europe 160 000; Canada 160 000 / 10 y; ZR 105 000 |
+| drive-belt                    | 50 000 km / 48 mo     |                 | Maker: inspect only; ZR: at least 50 000                         |
+| coolant                       | 60 000 km / 48 mo     |                 | Maker Super Coolant 220 000 / 11 y, then 120 000 / 6 y; history unknown |
+| brake-fluid                   | 30 000 km / 24 mo     |                 | Maker 24 mo; ICP 48 000 / 2 y                                    |
+| gearbox-oil (MT + front diff) | 60 000 km / 48 mo     |                 | Maker 60 000 / 48; ICP 40 000 / 3 y; ZR diffs 50 000             |
+| front-differential-oil (AT)   | 60 000 km / 48 mo     |                 | Separate gear oil on the 4-speed AT (owner's manual)             |
+| atf (AT)                      | 60 000 km / 48 mo     |                 | Maker 105 000; ZR 30 000; compromise                             |
+| rear-differential-oil         | 60 000 km / 48 mo     |                 | Maker 60 000 / 48                                                |
+| power-steering-fluid          | 60 000 km / 48 mo     |                 | No maker interval (inspection only) — practice, owner to decide  |
+| brake-inspection              | 15 000 km / 12 mo     |                 | Maker pads/discs every 15 000 / 12                               |
+| suspension-inspection         | 15 000 km / 12 mo     |                 | Maker 30 000 / 24, severe (rough roads, salt, cold) 15 000 / 12  |
+
+** Where sources disagreed and what was chosen
+1. [@1]  Timing belt: 105 000 km (manual, CIS and Israel column; ZR) vs 160 000 km (manual,
+   rest of Europe; Subaru Canada for 2012+ EJ engines). Chosen 105 000 km / 7 years: Ukraine is closer to the CIS
+   schedule, and the EJ is an interference engine. The kit includes the hydraulic tensioner, all idlers and the water
+   pump (driven by the timing belt).
+2. [@2]  Engine generation: the 2011 facelift brought the FB20/FB25 engine with a timing chain in many markets. The
+   template matches by engine (EJ20, EJ25) so that an FB car does not get a timing-belt item; years stay 2008–2013 as
+   requested.
+3. [@3]  ATF: maker 105 000 km vs Za Rulem 30 000 km. Chosen 60 000 km / 4 years (partial change).
+4. [@4]  Coolant: maker's Super Coolant intervals are long (11 years first), but for a 15-year-old car the coolant
+   type is unknown. Chosen 60 000 km / 4 years; 120 000 km / 6 years is acceptable with documented genuine coolant.
+5. [@5]  Oil: maker 15 000 km; chosen 10 000 km / 12 months because the manual's severe-condition list (cold, short
+   trips) applies to daily use in Ukraine.
+6. [@6]  Spark plugs: kept at the maker's 105 000 km for the petrol template; on LPG they should be about 30 000 km
+   (GazMax: inspect every 10 000, replace 20 000–30 000). The owner's car runs on LPG, so this item should be edited
+   when the LPG add-on is applied.
+
+** Open questions for the owner
+7. [@7]  Gearbox of the owner's Forester: manual or automatic? Delete either =gearbox-oil= or =front-differential-oil=
+   + =atf=.
+8. [@8]  Timing belt history: when and at what mileage was the belt kit last replaced, and was the water pump included?
+   That sets the first due date.
+9. [@9]  Coolant: is genuine Subaru coolant documented? If yes, the interval can be 120 000 km / 6 years.
+10. [@10]  Spark plugs on LPG: shorten to 30 000 km here, or keep 105 000 km and rely on the LPG template note?
+11. [@11]  Valve clearances: LPG is known to be harder on valves; one LPG system maker's manual (seen only in a search
+   result, not verified) suggests checking valve clearance every 30 000 km on gas. Should a valve-clearance check be
+   added for the LPG car?
+12. [@12]  Power steering fluid: keep the item (no maker interval) or remove it?
+
+* Ford Transit Mk7 (2006–2014), 2.2 / 2.4 TDCi diesel
+
+Main sources: Ford's service plans per engine code as published by
+[[https://uk.haynes.com/pages/maintenance-plans-car-ford-transit-2006-2014][Haynes maintenance plans]] (Euro 4 with and
+without DPF, Euro 5) and the Haynes
+[[https://uk.haynes.com/blogs/tips-tutorials/ford-transit-routine-maintenance-guide-2006-to-2013-models][routine
+maintenance guide]] (Haynes' own minimum intervals). Timing chain and fuel filter from the
+[[https://fordtransit.org/forum/viewtopic.php?f=5&t=3765][Ford Transit Forum: timing chain]],
+[[https://fordtransit.org/forum/viewtopic.php?f=5&t=21793][Ford Transit Forum: fuel filter]] and
+[[https://pmmonline.co.uk/technical/replacement-timing-kit-installation/][Professional Motor Mechanic]]; coolant also
+from [[https://cararac.com/coolant/ford/transit.html][cararac.com]].
+
+Timing drive: the 2.2 and 2.4 Duratorq "Puma" engines use an oil-lubricated (wet) timing chain, no belt. Ford gives no
+replacement interval; failures reported on the forum and in the trade press come from worn or contaminated oil
+starving the hydraulic tensioner, at around 100 000 miles. So the template has a /check/ item, not a replacement.
+
+| Item                    | Interval           | Soon window | Why / sources                                                      |
+|-------------------------+--------------------+-------------+--------------------------------------------------------------------|
+| engine-oil              | 10 000 km / 12 mo  |             | Ford 25 000–50 000; Haynes 12 000 / 6 mo; chain needs good oil     |
+| air-filter              | 20 000 km / 12 mo  |             | Ford 50 000–60 000 / 24; dusty roads                               |
+| cabin-filter            | 15 000 km / 12 mo  |             | Ford "on request"                                                  |
+| fuel-filter             | 20 000 km / 12 mo  |             | Ford: by indicator; Haynes ~48 000 / 2 y; Ukrainian diesel, winter |
+| fuel-water-drain        | 10 000 km / 6 mo   |             | Haynes 15 000 mi / 12 mo; before frosts                            |
+| drive-belt (+ tensioner) | 100 000 km / 60 mo |             | Haynes renew 150 000 mi / 10 y, inspect yearly                     |
+| timing-chain (check)    | 150 000 km         | 10 000 km   | No maker interval; failures ~160 000 km with poor oil              |
+| coolant                 | 100 000 km / 48 mo |             | Haynes 2 y; cararac 3–5 y                                          |
+| brake-fluid             | 24 mo              |             | Ford 24 mo                                                         |
+| gearbox-oil             | 100 000 km / 96 mo |             | Ford/Haynes level check only                                       |
+| rear-differential-oil (RWD) | 100 000 km / 96 mo |          | Haynes level check only                                            |
+| power-steering-fluid    | 60 000 km / 48 mo  |             | Level check only — practice, owner to decide                       |
+| brake-inspection        | 15 000 km / 12 mo  |             | Ford every service; Haynes 15 000 mi / 12 mo                       |
+| suspension-inspection   | 15 000 km / 12 mo  |             | Ford every service (suspension, steering, ball joints, CV boots)   |
+
+** Where sources disagreed and what was chosen
+13. [@13]  Oil interval: Ford 30 000 km / 12 months (Euro 4), 25 000 km / 12 months (Euro 4 + DPF), 50 000 km /
+   24 months (Euro 5) vs Haynes 7500 miles / 6 months. Chosen 10 000 km / 12 months — the chain tensioner depends on
+   oil condition.
+14. [@14]  Fuel filter: Ford has no fixed interval (blocked-filter indicator on the filter head); Haynes says every
+   30 000 miles / 2 years; forum users change it with every oil change, but one warns that very frequent changes can
+   distort the filter head. Chosen 20 000 km / 12 months, in autumn, plus a water drain twice a year.
+15. [@15]  Coolant: Haynes 2 years, cararac 3–5 years; a search snippet attributed a 10-year Ford interval, which could
+   not be opened and verified. Chosen 4 years / 100 000 km.
+16. [@16]  Gearbox and rear axle: no replacement interval in any source found (level checks only). Chosen
+   100 000 km / 8 years as a practical value for an old van.
+
+** Not included, by design
+- DPF: no maker interval for the 2.2 TDCi; it regenerates while driving. Euro 5 (2011+) vans may have one.
+- Glow plugs, clutch, dual-mass flywheel, injectors: wear items without a maker interval.
+
+** Open questions for the owner
+17. [@17]  Is the owner's 2011 Transit front- or rear-wheel drive? (FWD: delete =rear-differential-oil=.)
+18. [@18]  Euro 4 or Euro 5, and is a DPF fitted? This changes the oil specification (low-ash oil with a DPF).
+19. [@19]  Is there a record of a timing chain or tensioner replacement? Does the engine rattle on a cold start?
+20. [@20]  Engine names in =match=: the template uses ="2.2 TDCi"= / ="2.4 TDCi"=; the car's registered engine string
+   (e.g. "2.2 diesel") has to match it — to be settled in the =template-suggestions= slice.
+
+* LPG system add-on (sequential, 4th generation)
+
+Sources: [[https://gazmax.com.ua/hbo-4-pokolinnia-povnyi-haid-dlia-vodiia-yak-zrozumity-pereviryty-nalashtuvaty-ta-obsluhovuvaty-samomu/][GazMax:
+LPG 4th-generation guide]] (table of intervals),
+[[https://gbo.ua/servis-gbo-v-kieve/obsluzhivanie-gbo-v-kieve.html][GBO.UA service schedule]],
+[[https://gazmax.com.ua/hazovyi-reduktor-hbo-4-pokolenyia-kak-vybrat-obsluzhyvat-y-kohda-nuzhen-remkomplekt/][GazMax:
+reducer]], [[https://nagaz24.com/lpg-electrovalve-reducer-filter-replacement-tomasetto-at07-at09/][Nagaz24: Tomasetto
+filter]], [[https://energyplus.ua/service/remont-i-oposvidchennja-baloniv/][Energy Plus: tank recertification]],
+[[https://autogasmarket.ua/ua/news/kakoi-kupit-ballon-gbo/][Autogasmarket: tank life]]. Gas filters every 8000 km
+follow the owner's installer.
+
+| Item            | Interval           | Soon window | Why / sources                                                          |
+|-----------------+--------------------+-------------+------------------------------------------------------------------------|
+| lpg-filters     | 8000 km / 12 mo    |             | Installer 8000; published 10 000–15 000 or yearly                      |
+| lpg-diagnostics | 16 000 km / 6 mo   |             | GazMax 1–2× a year (before/after winter); GBO.UA every 10 000–15 000   |
+| lpg-reducer     | 30 000 km / 24 mo  |             | GazMax kit ~30 000; GBO.UA kit 50 000–60 000; service at 30 000, kit by condition |
+| lpg-injectors   | 30 000 km / 24 mo  |             | GBO.UA cleaning 30 000–40 000                                          |
+| lpg-tank        | 24 mo              | 60 days     | Recertification every 2 years (steel propane-butane tanks)            |
+| lpg-hoses       | 100 000 km / 60 mo |             | GBO.UA 100 000 km or 3–5 years                                         |
+
+** Where sources disagreed and what was chosen
+21. [@21]  Filters: one item for the liquid-phase and vapour-phase filters, because both are replaced at the same visit
+   and the installer gives one interval (8000 km). Published values are longer (10 000–15 000 km). A third filter
+   inside some reducers has a much longer interval and is covered by the reducer service.
+22. [@22]  Reducer repair kit: ~30 000 km (GazMax) vs 50 000–60 000 km (GBO.UA). Chosen: a reducer /service/ every
+   30 000 km / 2 years, with the membrane kit when the service finds it needed.
+23. [@23]  Tank life: 10, 12 or 20 years depending on the source; the binding value is on the tank's plate. The
+   2-year recertification is consistent across the sources found.
+24. [@24]  Spark plugs: not an item here (kept in the car template), but the template note says to shorten the car's
+   spark-plug interval to about 30 000 km.
+
+** Open questions for the owner
+25. [@25]  Which LPG system is installed (make of ECU, reducer, injectors)? Its maker's manual may give its own
+   intervals.
+26. [@26]  Is the 2-year tank recertification enforced for private cars in Ukraine today? The sources are LPG
+   workshops, not the regulation text; the regulation could not be found and verified.
+27. [@27]  Diagnostics every 6 months: acceptable, or once a year together with a filter change?
+
+* What could not be verified
+- No original Subaru Europe or Ukraine owner's manual PDF could be opened; the European schedule comes from a faithful
+  transcription (ivangrigoryev.com). Several pages returned HTTP 403 (carwiki.de, autodoc, carsguide, lpgtech.ua,
+  profigas.ua, gaz-time.ua, service-gas.com.ua, manualslib), so they are not cited.
+- Ford's own fuel filter, coolant and gearbox-oil intervals for the Mk7 could not be read from a Ford document; the
+  values come from Haynes and forum posts.
+- No Ukrainian regulation text on LPG tank recertification was found; the 2-year period comes from LPG workshop pages.

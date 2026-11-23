@@ -1,0 +1,93 @@
+(ns auto-maintenance.reminders
+  "Reminders (D9): a background job (Android WorkManager) runs at the configured time on the configured days, takes
+  the todo list (views/reminders-to-send), shows one notification per entry and records each with reminder/send.
+  Every run schedules the next one; so do the app's start and every change of the reminder settings. The Dart entry
+  point of the job is callbackDispatcher in lib/main.dart, which calls `run-task`."
+  (:require ["package:flutter_local_notifications/flutter_local_notifications.dart" :as ln]
+            ["package:workmanager/workmanager.dart" :as wm]
+            [auto-maintenance.app :as app]
+            [auto-maintenance.i18n :as i18n :refer [t]]
+            [auto-maintenance.domain.dates :as dates]
+            [auto-maintenance.domain.views :as v]))
+
+(def task "reminders")
+
+(def weekdays ["mon" "tue" "wed" "thu" "fri" "sat" "sun"])
+
+(defonce !plugin (atom nil))
+
+(defn- plugin! []
+  (or @!plugin
+    (let [p (ln/FlutterLocalNotificationsPlugin)]
+      (await (.initialize p .settings (ln/InitializationSettings
+                                         .android (ln/AndroidInitializationSettings "@mipmap/ic_launcher"))))
+      (reset! !plugin p))))
+
+(defn request-permission!
+  "Android 13+ asks the owner once whether the app may show notifications."
+  []
+  (await (plugin!))
+  (await (.requestNotificationsPermission (ln/AndroidFlutterLocalNotificationsPlugin))))
+
+(defn- show! [id title body]
+  (let [^ln/FlutterLocalNotificationsPlugin p (await (plugin!))]
+    (await (.show p .id id .title title .body body
+             .notificationDetails (ln/NotificationDetails
+                                    .android (ln/AndroidNotificationDetails "reminders" (t :reminders-channel)
+                                               .importance ln/Importance.high .priority ln/Priority.high))))))
+
+(defn- short-date [iso] (if iso (subs iso 5) ""))
+
+(defn text
+  "The notification text of a todo entry, in the chosen language."
+  [car-name {:keys [kind level title remaining_km due_at predicted_at last_at]}]
+  (cond
+    (= "odometer-stale" kind) (t :notify-stale {:car car-name :date last_at})
+    (= "overdue" level) (t :notify-overdue {:car car-name :item title})
+    remaining_km (t :notify-soon-km {:car car-name :item title :km remaining_km
+                                     :date (short-date (or predicted_at due_at))})
+    :else (t :notify-soon-date {:car car-name :item title :date due_at})))
+
+(defn next-run
+  "Delay from `now` (local) to the next notify_at on one of `days`."
+  [^DateTime now {:keys [notify_at days]}]
+  (let [[h m] (map #(int/parse %) (.split ^String notify_at ":"))]
+    (some (fn [d]
+            (let [at (DateTime (.-year now) (.-month now) (+ d (.-day now)) h m)]
+              (when (and (.isAfter at (.add now (Duration .minutes 1)))
+                      (some #{(weekdays (dec (.-weekday at)))} days))
+                (.difference at now))))
+      (range 0 9))))
+
+(defn schedule-next!
+  "Replaces the pending job with one at the next configured time; cancels it when reminders are off."
+  []
+  (let [s (v/settings (filter #(= "settings" (namespace (:type %))) @app/!events) nil)
+        delay (when (:enabled s) (next-run (DateTime/now) s))]
+    (if delay
+      (await (.registerOneOffTask (wm/Workmanager) task task .initialDelay delay
+               .existingWorkPolicy wm/ExistingWorkPolicy.replace))
+      (await (.cancelByUniqueName (wm/Workmanager) task)))))
+
+(defn send-due!
+  "Shows and records every reminder on today's todo list; returns how many were sent."
+  []
+  (let [events @app/!events
+        names (into {} (map (juxt :car :name)) (filter #(= :car/registered (:type %)) events))
+        today (dates/today)
+        {:keys [todo]} (v/reminders-to-send events {:today today})]
+    (doseq [{:keys [car item kind] :as entry} todo]
+      (let [body (text (get names car car) entry)]
+        (await (show! (bit-and (hash [car item kind (:level entry)]) 0x7fffffff) (get names car car) body))
+        (await (app/execute! (into {} (filter (comp some? val))
+                               (assoc (select-keys entry [:car :item :kind :level :due_km :due_at :last_at])
+                                 :type :reminder/send :at today :text body))))))
+    (count todo)))
+
+(defn run-task
+  "The background job: loads the log, sends what is due today, schedules the next run."
+  []
+  (await (app/start!))
+  (await (send-due!))
+  (await (schedule-next!))
+  true)

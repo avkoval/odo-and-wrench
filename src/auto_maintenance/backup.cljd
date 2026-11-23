@@ -1,0 +1,79 @@
+(ns auto-maintenance.backup
+  "Backup and restore (D7): a zip with backup.json (format, date, counts), events.jsonl (the whole event log) and the
+  photos folder. Exported through the share sheet (save to Files, Google Drive, send to yourself), restored from a
+  file picked on the phone. Restoring replaces every event and photo on the phone."
+  (:require ["dart:io" :as io]
+            ["dart:convert" :as convert]
+            ["package:archive/archive.dart" :as zip]
+            ["package:file_picker/file_picker.dart" :as fp]
+            ["package:path_provider/path_provider.dart" :as pp]
+            ["package:share_plus/share_plus.dart" :as share]
+            [clojure.string :as str]
+            [auto-maintenance.app :as app]
+            [auto-maintenance.photos :as photos]
+            [auto-maintenance.store :as store]
+            [auto-maintenance.domain.backup :as b]
+            [auto-maintenance.domain.dates :as dates]
+            [auto-maintenance.domain.json :as json]))
+
+(defn- photo-files
+  "Every file under the documents folder's photos/, as [relative-path File]."
+  []
+  (let [dir (io/Directory (str @photos/!docs-dir "/photos"))]
+    (if-not (await (.exists dir))
+      []
+      (vec (for [^io/FileSystemEntity f (await (.toList (.list dir .recursive true)))
+                 :when (dart/is? f io/File)]
+             [(subs (.-path f) (inc (count @photos/!docs-dir))) f])))))
+
+(defn export!
+  "Writes the backup zip to the temporary folder and opens the share sheet; returns the file name."
+  []
+  (let [events @app/!events
+        files (await (photo-files))
+        archive (zip/Archive)
+        name (str "auto-maintenance-" (dates/today) ".zip")]
+    (.add archive (zip/ArchiveFile.string "backup.json"
+                    (json/write-str {:format b/format-version :app "auto-maintenance" :created (dates/today)
+                                     :events (count events) :photos (count files)})))
+    (.add archive (zip/ArchiveFile.string "events.jsonl" (b/events->jsonl events)))
+    (doseq [[rel ^io/File f] files]
+      (.add archive (zip/ArchiveFile.bytes rel (await (.readAsBytes f)))))
+    (let [tmp (.-path (await (pp/getTemporaryDirectory)))
+          out (io/File (str tmp "/" name))]
+      (await (.writeAsBytes out (.encodeBytes (zip/ZipEncoder) archive)))
+      (await (.share share/SharePlus.instance
+               (share/ShareParams .files [(share/XFile (.-path out) .mimeType "application/zip")] .subject name)))
+      name)))
+
+(defn pick!
+  "Lets the owner pick a backup zip; returns {:events [..] :photos {rel bytes} :info {..}} or nil when cancelled.
+  Throws (ex-info .. {:category \"invalid\"}) when the file is not a backup of this app."
+  []
+  (let [picked (await (fp/FilePicker.pickFiles .type fp/FileType.any))]
+    (when (seq picked)
+      (let [^fp/PlatformFile file (first picked)
+            archive (try (.decodeBytes (zip/ZipDecoder) (await (.readAsBytes file)))
+                      (catch Object _ (throw (ex-info "not a zip file" {:category "invalid"}))))
+            entries (into {} (for [^zip/ArchiveFile f (.-files archive) :when (.-isFile f)] [(.-name f) f]))
+            text-of (fn [n] (when-some [^zip/ArchiveFile f (get entries n)] (.decode convert/utf8 (.-content f))))
+            info (some-> (text-of "backup.json") json/read-str)]
+        (when-not (and info (= b/format-version (:format info)) (get entries "events.jsonl"))
+          (throw (ex-info "not a backup of this app" {:category "invalid"})))
+        {:info info
+         :events (b/jsonl->events (text-of "events.jsonl"))
+         :photos (into {} (for [[n ^zip/ArchiveFile f] entries :when (str/starts-with? n "photos/")]
+                            [n (.-content f)]))}))))
+
+(defn restore!
+  "Replaces every event and photo on the phone with the backup's."
+  [{:keys [events photos]}]
+  (let [dir (io/Directory (str @photos/!docs-dir "/photos"))]
+    (when (await (.exists dir)) (await (.delete dir .recursive true)))
+    (doseq [[rel bytes] photos]
+      (let [^io/File f (photos/file-of rel)]
+        (await (.create (.-parent f) .recursive true))
+        (await (.writeAsBytes f bytes))))
+    (await (store/replace-all! @app/!db events))
+    (reset! app/!events (await (store/load-all @app/!db)))
+    nil))

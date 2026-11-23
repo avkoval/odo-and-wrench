@@ -1,0 +1,28 @@
+(ns auto-maintenance.i18n
+  "Texts of screens and notifications (D11): one Flutter ARB file per language in assets/l10n (app_en.arb,
+  app_uk.arb), loaded at start. (t :key) gives the text in the chosen language, English when a key is missing;
+  {name} placeholders are filled from a map: (t :km-left {:km 600})."
+  (:require ["package:flutter/services.dart" :as svc]
+            [clojure.string :as str]
+            [auto-maintenance.domain.json :as json]))
+
+(defonce !texts (atom {}))
+(defonce !language (atom "en"))
+
+(def languages ["en" "uk"])
+
+(defn parse-arb
+  "An ARB file's messages: {\"key\" \"text\"}, without the @-metadata."
+  [text]
+  (into {} (for [[k v] (json/read-str text) :when (not (str/starts-with? (name k) "@"))] [(name k) v])))
+
+(defn load! []
+  (doseq [lang languages]
+    (swap! !texts assoc lang (parse-arb (await (.loadString svc/rootBundle (str "assets/l10n/app_" lang ".arb")))))))
+
+(defn t
+  ([k] (t k nil))
+  ([k args]
+   (let [k (name k)
+         s (or (get-in @!texts [@!language k]) (get-in @!texts ["en" k]) k)]
+     (reduce (fn [s [a v]] (str/replace s (str "{" (name a) "}") (str v))) s args))))

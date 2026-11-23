@@ -1,0 +1,85 @@
+(ns auto-maintenance.domain.vin
+  "VIN from a photo and offline decoding (D10): the maker from the WMI (positions 1-3), the model year where the
+  maker puts it in position 10 (North America, Japan, Korea) or, for Ford Europe, in position 11, and a few model
+  codes. The owner confirms or completes everything; what was decoded is kept as `decoded`. Pure."
+  (:require [clojure.string :as str]))
+
+(def makers
+  "WMI (or its first two characters) -> make, for cars common in Ukraine."
+  {"JF1" "Subaru" "JF2" "Subaru" "JF3" "Subaru" "4S3" "Subaru" "4S4" "Subaru"
+   "WF0" "Ford" "WF1" "Ford" "1FA" "Ford" "1FM" "Ford" "1FT" "Ford" "NM0" "Ford" "X9F" "Ford"
+   "WVW" "Volkswagen" "WV1" "Volkswagen" "WV2" "Volkswagen" "WVG" "Volkswagen" "3VW" "Volkswagen"
+   "WAU" "Audi" "WUA" "Audi" "TRU" "Audi" "WBA" "BMW" "WBS" "BMW" "WBX" "BMW"
+   "WDB" "Mercedes-Benz" "WDD" "Mercedes-Benz" "WDC" "Mercedes-Benz" "W1K" "Mercedes-Benz" "W1N" "Mercedes-Benz"
+   "WDF" "Mercedes-Benz" "W1V" "Mercedes-Benz"
+   "W0L" "Opel" "W0V" "Opel" "VF1" "Renault" "VF6" "Renault" "UU1" "Dacia" "VF3" "Peugeot" "VR3" "Peugeot"
+   "VF7" "Citroën" "VR7" "Citroën" "ZFA" "Fiat" "ZFC" "Fiat" "TMB" "Škoda" "VSS" "SEAT" "YV1" "Volvo" "YV4" "Volvo"
+   "SAL" "Land Rover" "SAJ" "Jaguar"
+   "JT" "Toyota" "SB1" "Toyota" "NMT" "Toyota" "VNK" "Toyota" "JTH" "Lexus"
+   "JN" "Nissan" "SJN" "Nissan" "VSK" "Nissan" "JM" "Mazda" "JH" "Honda" "SHH" "Honda" "SHS" "Honda"
+   "JA" "Mitsubishi" "JMB" "Mitsubishi" "JS" "Suzuki" "TSM" "Suzuki"
+   "KMH" "Hyundai" "TMA" "Hyundai" "NLH" "Hyundai" "KNA" "Kia" "KND" "Kia" "U5Y" "Kia" "U6Y" "Kia"
+   "XTA" "Lada" "Y6D" "Daewoo" "KL" "Chevrolet" "XUU" "Chevrolet" "LVV" "Chery" "L6T" "Geely" "LGW" "Great Wall"
+   "5YJ" "Tesla" "7SA" "Tesla" "LRW" "Tesla"})
+
+(def models
+  "Model codes where the maker's VIN carries them: [make positions code] -> model."
+  {["Subaru" [3 5] "SG"] "Forester" ["Subaru" [3 5] "SH"] "Forester" ["Subaru" [3 5] "SJ"] "Forester"
+   ["Subaru" [3 5] "SK"] "Forester" ["Subaru" [3 5] "BL"] "Legacy" ["Subaru" [3 5] "BP"] "Legacy / Outback"
+   ["Subaru" [3 5] "BR"] "Legacy / Outback" ["Subaru" [3 5] "GH"] "Impreza" ["Subaru" [3 5] "GE"] "Impreza"
+   ["Subaru" [3 5] "GP"] "XV" ["Ford" [6 8] "TT"] "Transit"})
+
+(def ^:private year-codes "ABCDEFGHJKLMNPRSTVWXY123456789")
+
+(defn model-year
+  "Model year of a year code (A = 1980/2010, 1 = 2001, 9 = 2009, …): the latest one not after `this-year` + 1."
+  [c this-year]
+  (let [i (str/index-of year-codes (str c))]
+    (when i
+      (let [base (+ 1980 i)
+            years (filter #(<= % (inc this-year)) [base (+ base 30) (+ base 60)])]
+        (when (seq years) (reduce max years))))))
+
+(defn- year-position [vin make]
+  (cond
+    (and (= "Ford" make) (str/starts-with? vin "W")) 10 ; Ford Europe: position 11 (0-based 10)
+    (#{\1 \2 \3 \4 \5 \J \K} (first vin)) 9
+    :else nil))
+
+(defn decode
+  "What can be read from the VIN offline: {:make .. :model .. :year ..}, keys left out when unknown."
+  ([vin] (decode vin 2026))
+  ([vin this-year]
+   (let [make (or (get makers (subs vin 0 3)) (get makers (subs vin 0 2)))
+         model (some (fn [[[mk [from to] code] model]]
+                       (when (and (= mk make) (= code (subs vin from to))) model))
+                 models)
+         year (when-let [p (year-position vin make)] (model-year (nth vin p) this-year))]
+     (into {} (filter (comp some? val)) {:make make :model model :year year}))))
+
+(defn- fix-ocr
+  "A text-recognition guess at a VIN: no I, O, Q in a VIN, so they were 1, 0, 0."
+  [s]
+  (-> s str/upper-case (str/replace #"[^A-Z0-9]" "") (str/replace "O" "0") (str/replace "Q" "0") (str/replace "I" "1")))
+
+(defn candidates
+  "VINs found in recognised text lines (a registration certificate has other numbers too): a word of 17 valid
+  characters, up to four neighbouring words that make 17 together (a VIN printed in groups), or 17 characters inside
+  a longer word (\"VIN:JF1…\"). Known makers first."
+  [lines]
+  (let [words (vec (mapcat #(remove str/blank? (str/split (str %) #"\s+")) lines))
+        runs (for [i (range (count words))
+                   n (range 1 5)
+                   :when (<= (+ i n) (count words))]
+               [n (fix-ocr (apply str (subvec words i (+ i n))))])
+        found (for [[n s] runs
+                    v (cond
+                        (= 17 (count s)) [s]
+                        (and (= 1 n) (> (count s) 17)) (mapv #(subs s % (+ % 17)) (range (- (count s) 16)))
+                        :else [])
+                    :when (re-matches #"[A-HJ-NPR-Z0-9]{17}" v)
+                    :when (and (re-find #"[A-Z]" v) (re-find #"[0-9]" v))]
+                v)]
+    (->> (distinct found)
+      (sort-by #(if (:make (decode %)) 0 1))
+      vec)))

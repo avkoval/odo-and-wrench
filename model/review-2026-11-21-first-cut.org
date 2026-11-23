@@ -129,6 +129,12 @@ memory at start (a few hundred events per car per decade). Because everything is
 export of =events.jsonl= plus photos (to a file or Google Drive, the owner's choice) and needs no model change. Fuel
 log (litres, consumption) is out of scope.
 
+*** Implementation note 2026-11-23 (backup)
+Built as described, no model change: Settings → /Export backup/ writes a zip (=backup.json= with format and counts,
+=events.jsonl= with one event per line in log order, =photos/=) and opens the share sheet (Files, Google Drive, a
+messenger). /Restore from backup/ picks such a zip and, after a confirmation, replaces every event and photo on the
+phone — restore is meant for a new phone or for going back to an older copy, not for merging two phones.
+
 ** ACCEPTED D8 Schedules come from templates matched to the car; the owner can edit everything
 CLOSED: [2026-11-21 Sat 20:25]
 A /schedule template/ is data shipped with the app (one file per template: make, model, years, engines, fuel, items
@@ -171,6 +177,13 @@ CLOSED: [2026-11-21 Sat 20:25]
 No =settings/language-chosen= event means English. Texts (screens, notifications, template item titles) are keys in
 one translation file per language (Flutter's ARB files, used from ClojureDart). Adding a language is a new file and an
 entry in the supported list — no model change. Data the owner types (notes, place names) is not translated.
+
+*** Implementation note 2026-11-23 (translations)
+Screen and notification texts are keys in [[file:../assets/l10n/app_en.arb]] and [[file:../assets/l10n/app_uk.arb]],
+loaded at start (a test checks that Ukrainian has every key with the same placeholders). Deviation: template titles,
+item titles and notes are not ARB keys but sit in each template file as ={"en": …, "uk": …}=, so a template stays one
+self-contained file with its sources. The mechanic's message heading ("to fix:") is translated; the item titles in it
+are what the owner typed.
 
 ** ACCEPTED D12 Costs: category on diary entries, totals per year; fuel and bank import later
 CLOSED: [2026-11-21 Sat 20:50]

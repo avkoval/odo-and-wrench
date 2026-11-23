@@ -1,0 +1,23 @@
+(ns auto-maintenance.i18n-test
+  "Every text has a Ukrainian translation with the same {placeholders} (D11)."
+  (:require ["dart:io" :as io]
+            [cljd.test :refer [deftest is testing]]
+            [auto-maintenance.i18n :as i18n]))
+
+(defn arb [lang] (i18n/parse-arb (.readAsStringSync (io/File (str "assets/l10n/app_" lang ".arb")))))
+
+(defn placeholders [s] (set (re-seq #"\{[a-z]+\}" s)))
+
+(deftest ukrainian-has-every-text
+  (let [en (arb "en") uk (arb "uk")]
+    (is (< 100 (count en)))
+    (is (= (set (keys en)) (set (keys uk))))
+    (doseq [[k s] en]
+      (testing k (is (= (placeholders s) (placeholders (get uk k ""))))))))
+
+(deftest t-fills-placeholders-and-falls-back-to-english
+  (reset! i18n/!texts {"en" (arb "en") "uk" {}})
+  (reset! i18n/!language "uk")
+  (is (= "600 km left" (i18n/t :km-left {:km 600})))
+  (is (= "no-such-key" (i18n/t :no-such-key)))
+  (reset! i18n/!language "en"))

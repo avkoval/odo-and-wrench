@@ -1,0 +1,51 @@
+{
+  "template": "lpg-system",
+  "version": 1,
+  "title": {"en": "LPG system (gas filters, reducer service)", "uk": "ГБО (газові фільтри, обслуговування редуктора)"},
+  "addon": true,
+  "match": {"fuels": ["lpg"]},
+  "note": {
+    "en": "Add-on for any car with an aftermarket sequential (4th generation) propane-butane injection system — BRC, Landi Renzo, Tomasetto, Stag/AC, KME and similar. It complements the car template and does not replace it. Spark plugs are kept in the car template, but on LPG they work hotter and wear faster: LPG workshops inspect them every 10 000 km and replace them every 20 000–30 000 km, so the car's spark-plugs item should be shortened to about 30 000 km when this add-on is applied. The reducer is heated by the engine coolant, so the car's coolant item matters for the gas system too. Intervals of gas equipment makers and installers differ; the owner's installer's values take priority.",
+    "uk": "Додатковий шаблон для будь-якого авто з ГБО 4 покоління (послідовне впорскування пропан-бутану) — BRC, Landi Renzo, Tomasetto, Stag/AC, KME тощо. Доповнює шаблон автомобіля, а не замінює його. Свічки запалювання лишаються в шаблоні автомобіля, але на газу вони працюють у важчому режимі й зношуються швидше: газові СТО перевіряють їх кожні 10 000 км і міняють кожні 20 000–30 000 км, тому при застосуванні цього шаблону пункт свічок в авто слід скоротити приблизно до 30 000 км. Редуктор гріється антифризом двигуна, тож пункт заміни охолоджувальної рідини в авто важливий і для ГБО. Інтервали виробників обладнання та установників різняться; пріоритет мають значення установника, який обслуговує авто."
+  },
+  "sources": [
+    {"title": "ГБО 4 покоління — повний гайд для водія (таблиця рекомендованих інтервалів обслуговування) — GazMax", "url": "https://gazmax.com.ua/hbo-4-pokolinnia-povnyi-haid-dlia-vodiia-yak-zrozumity-pereviryty-nalashtuvaty-ta-obsluhovuvaty-samomu/"},
+    {"title": "Обслуговування ГБО 4 покоління: регламент ТО — GBO.UA", "url": "https://gbo.ua/servis-gbo-v-kieve/obsluzhivanie-gbo-v-kieve.html"},
+    {"title": "Газовий редуктор ГБО: як обрати, обслуговувати і коли потрібен ремкомплект — GazMax", "url": "https://gazmax.com.ua/hazovyi-reduktor-hbo-4-pokolenyia-kak-vybrat-obsluzhyvat-y-kohda-nuzhen-remkomplekt/"},
+    {"title": "LPG electrovalve / reducer filter replacement, Tomasetto AT07/AT09 — Nagaz24", "url": "https://nagaz24.com/lpg-electrovalve-reducer-filter-replacement-tomasetto-at07-at09/"},
+    {"title": "Ремонт і опосвідчення балонів — Energy Plus", "url": "https://energyplus.ua/service/remont-i-oposvidchennja-baloniv/"},
+    {"title": "Який балон ГБО купити? (термін служби, переосвідчення) — Autogasmarket", "url": "https://autogasmarket.ua/ua/news/kakoi-kupit-ballon-gbo/"}
+  ],
+  "items": [
+    {"item": "lpg-filters", "title": {"en": "LPG filters (liquid + vapour phase)", "uk": "Фільтри ГБО (рідкої та летючої фази)"},
+     "every_km": 8000, "every_months": 12,
+     "note": {"en": "One item for both filters: the liquid-phase filter (before the reducer / in the solenoid valve) and the vapour-phase filter (between reducer and injectors) are replaced at the same visit. The owner's installer: every 8000 km. Published values: 10 000 km (Tomasetto filter supplier), 10 000–15 000 km or once a year (GazMax, GBO.UA). The installer's 8000 km is used, plus once a year for low-mileage cars.",
+              "uk": "Один пункт для обох фільтрів: фільтр рідкої фази (перед редуктором / в електроклапані) і фільтр летючої фази (між редуктором і форсунками) міняють за один візит. Установник власника: кожні 8000 км. Опубліковані значення: 10 000 км (постачальник фільтрів Tomasetto), 10 000–15 000 км або раз на рік (GazMax, GBO.UA). Взято 8000 км установника, а для авто з малим пробігом — не рідше разу на рік."},
+     "sources": [0, 1, 3]},
+    {"item": "lpg-diagnostics", "title": {"en": "LPG diagnostics, ECU adjustment and leak test", "uk": "Діагностика ГБО, корекція налаштувань і перевірка герметичності"},
+     "every_km": 16000, "every_months": 6,
+     "note": {"en": "Computer diagnostics of the gas ECU (fuel trims, auto-calibration correction, reducer pressure) and a leak test. GazMax: diagnostics/calibration 1–2 times a year (before and after winter), leak test twice a year; GBO.UA: at each 10 000–15 000 km service. Recommended every 6 months (before and after winter) or every second filter change, whichever comes first.",
+              "uk": "Комп'ютерна діагностика ЕБУ ГБО (паливні корекції, корекція автокалібрування, тиск редуктора) та перевірка герметичності. GazMax: діагностика/калібрування 1–2 рази на рік (перед зимою та після неї), перевірка герметичності двічі на рік; GBO.UA: на кожному ТО через 10 000–15 000 км. Рекомендовано кожні 6 місяців (перед зимою та після неї) або на кожній другій заміні фільтрів — що настане раніше."},
+     "sources": [0, 1]},
+    {"item": "lpg-reducer", "title": {"en": "LPG reducer service (membrane kit as needed)", "uk": "Обслуговування редуктора ГБО (ремкомплект за потреби)"},
+     "every_km": 30000, "every_months": 24,
+     "note": {"en": "Reducer (vaporiser) inspection and cleaning of heavy residues, pressure check, membrane/repair kit by condition. GazMax: repair kit ~30 000 km depending on gas quality; GBO.UA: repair kit at 50 000–60 000 km. Recommended a reducer service every 30 000 km / 2 years and the membrane kit when the service shows it is needed (unstable pressure, rough idle, hard cold starts, gas smell).",
+              "uk": "Огляд редуктора (випарника) з очищенням від важких фракцій, перевірка тиску, ремкомплект (мембрани) — за станом. GazMax: ремкомплект ~30 000 км залежно від якості газу; GBO.UA: ремкомплект на 50 000–60 000 км. Рекомендовано обслуговування редуктора кожні 30 000 км / 2 роки, а ремкомплект — коли обслуговування покаже потребу (нестабільний тиск, нерівний холостий хід, важкий холодний пуск, запах газу)."},
+     "sources": [0, 1, 2]},
+    {"item": "lpg-injectors", "title": {"en": "LPG injectors check and cleaning", "uk": "Перевірка та чистка газових форсунок"},
+     "every_km": 30000, "every_months": 24,
+     "note": {"en": "GBO.UA: cleaning of gas injectors (ultrasonic or chemical) every 30 000–40 000 km; GazMax: as needed during the yearly service. Recommended 30 000 km / 2 years, together with the reducer service.",
+              "uk": "GBO.UA: чистка газових форсунок (ультразвук або хімія) кожні 30 000–40 000 км; GazMax: за потреби на щорічному ТО. Рекомендовано 30 000 км / 2 роки, разом з обслуговуванням редуктора."},
+     "sources": [0, 1]},
+    {"item": "lpg-tank", "title": {"en": "LPG tank inspection and recertification", "uk": "Огляд і переосвідчення газового балона"},
+     "every_months": 24, "soon_days": 60,
+     "note": {"en": "Ukrainian gas workshops state that steel propane-butane tanks must be recertified every 2 years (hydraulic test at 30 atm); tank service life is 10–20 years by type and maker (sources disagree: 10, 12 and 20 years) — the date and life are on the tank plate. Also check the multivalve and tank mounting. Soon window 60 days to book a certified station.",
+              "uk": "За даними українських газових СТО, сталеві пропан-бутанові балони мають проходити переосвідчення кожні 2 роки (гідравлічне випробування тиском 30 атм); термін служби балона — 10–20 років залежно від типу та виробника (джерела розходяться: 10, 12 і 20 років), дата виготовлення й термін указані на табличці балона. Заодно перевіряють мультиклапан і кріплення балона. Попередження за 60 днів — щоб записатися на сертифіковану станцію."},
+     "sources": [0, 4, 5]},
+    {"item": "lpg-hoses", "title": {"en": "LPG hoses, pipes and seals", "uk": "Шланги, трубки та ущільнення ГБО"},
+     "every_km": 100000, "every_months": 60,
+     "note": {"en": "GBO.UA: every 100 000 km or 3–5 years — tank and multivalve check, replacement of hoses and seals as needed, full system service. Recommended 100 000 km / 5 years; rubber hoses age even with low mileage.",
+              "uk": "GBO.UA: кожні 100 000 км або 3–5 років — перевірка балона й мультиклапана, заміна шлангів і ущільнень за потреби, повне ТО системи. Рекомендовано 100 000 км / 5 років; гумові шланги старіють навіть при малому пробігу."},
+     "sources": [1]}
+  ]
+}

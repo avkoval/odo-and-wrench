@@ -36,9 +36,16 @@ screen (main.cljd) ──command──▶ app/execute! ──▶ decide (pure) �
 | read models | `src/auto_maintenance/domain/views.cljd` | pure functions `events, params -> data` (`due-list`, `mileage`, `open-issues`, `diary`, `costs-by-year` …) |
 | dates | `domain/dates.cljd` | ISO date strings, computed in UTC |
 | odometer number picking | `domain/odometer.cljd` | pure: recognised text lines → candidate readings |
+| VIN | `domain/vin.cljd` | pure: VIN candidates in recognised text, offline decoding (WMI → make, model year, a few model codes) |
+| receipts | `domain/receipt.cljd` | pure: the AI prompt and the parser of the pasted JSON |
+| backup format | `domain/backup.cljd`, `domain/json.cljd` | pure: events ⇄ `events.jsonl` |
 | event store | `src/auto_maintenance/store.cljd` | one table `events(seq, stream, type, data)`, data as EDN; stream = car id or `settings` |
 | app | `src/auto_maintenance/app.cljd` | `!events` (whole log in memory), `execute!` — the only write path |
-| adapters | `src/auto_maintenance/photos.cljd` | camera (image_picker), ML Kit text recognition, photo files |
+| adapters | `src/auto_maintenance/photos.cljd` | camera / gallery (image_picker), ML Kit text recognition, photo files |
+| reminders | `src/auto_maintenance/reminders.cljd`, `lib/main.dart` | WorkManager job at the configured time: `reminders-to-send` → notification + `reminder/send`; reschedules itself. Its Dart entry point `callbackDispatcher` (needs `@pragma('vm:entry-point')`) is in `lib/main.dart`, which also initialises WorkManager and calls the ClojureDart `main` |
+| texts | `src/auto_maintenance/i18n.cljd`, `assets/l10n/app_{en,uk}.arb` | `(t :key {:placeholder v})`; ARB files loaded at start; a test checks that Ukrainian has every key and placeholder |
+| templates | `assets/templates/*.json`, listed in `index.json` | schedule templates (D8) with sources per item; reviewed in `model/templates-review-2026-11-23.org`; matched by `views/template-suggestions` |
+| backup | `src/auto_maintenance/backup.cljd` | zip of `backup.json` + `events.jsonl` + `photos/`; export via the share sheet, restore via the file picker (replaces everything) |
 | screens | `src/auto_maintenance/main.cljd` | render read models, send commands; no business logic |
 | slice registry | `src/auto_maintenance/slices.cljd` | slice id → `{:decide …}` or `{:project …}`; drives the model check |
 
@@ -56,7 +63,7 @@ money is a decimal string plus currency; corrections are new events (`odometer/c
 
 - [test/auto_maintenance/model_test.cljd](../test/auto_maintenance/model_test.cljd) — reads the YAML and runs every
   scenario of every registered slice against `decide` / the read model (subset match: extra keys allowed, numbers by
-  value); prints `model check: N/24 slices implemented`.
+  value); prints `model check: N/25 slices implemented`.
 - [test/auto_maintenance/odometer_test.cljd](../test/auto_maintenance/odometer_test.cljd) — number picking.
 
 `bb test` always runs in a synced copy under `target/test-copy`. Test compilation writes to that copy,

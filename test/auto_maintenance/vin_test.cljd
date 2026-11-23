@@ -1,0 +1,30 @@
+(ns auto-maintenance.vin-test
+  (:require [cljd.test :refer [deftest is]]
+            [auto-maintenance.domain.vin :as vin]))
+
+(deftest decode-japanese-vin
+  (is (= {:make "Subaru" :model "Forester" :year 2008} (vin/decode "JF1SH5LS58G000000" 2026))))
+
+(deftest decode-ford-europe-vin
+  ;; Ford Europe: model year letter in position 11 (B = 2011), Transit = TT in positions 7-8
+  (is (= {:make "Ford" :model "Transit" :year 2011} (vin/decode "WF0XXXTTGXBA12345" 2026))))
+
+(deftest decode-other-european-vin-gives-only-the-make
+  (is (= {:make "Volkswagen"} (vin/decode "WVWZZZ1KZ8W000000" 2026))))
+
+(deftest unknown-maker
+  (is (= {} (vin/decode "ZZZ12345678901234" 2026))))
+
+(deftest model-year-codes
+  (is (= 2008 (vin/model-year \8 2026)))
+  (is (= 2011 (vin/model-year \B 2026)))
+  (is (= 1999 (vin/model-year \X 2026)))
+  (is (= 2026 (vin/model-year \T 2026))))
+
+(deftest vin-in-recognised-text
+  ;; a registration certificate: other numbers around, the VIN read with O for 0 and split into groups
+  (is (= ["JF1SH5LS58G000000"]
+        (vin/candidates ["СВІДОЦТВО ПРО РЕЄСТРАЦІЮ" "AA1234BB" "E JF1SH5 LS58G OOOOOO" "2008"]))))
+
+(deftest vin-glued-to-its-label
+  (is (= "WF0XXXTTGXBA12345" (first (vin/candidates ["VIN:WF0XXXTTGXBA12345"])))))

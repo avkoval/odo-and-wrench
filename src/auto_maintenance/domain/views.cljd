@@ -146,8 +146,9 @@
 ;; ------------------------------------------------------------------ issues
 
 (defn open-issues
-  "Open issues of a car, oldest first, and the message for the mechanic (D14, D15)."
-  [events _params]
+  "Open issues of a car, oldest first, and the message for the mechanic (D14, D15); `heading` is the translated
+  \"to fix:\"."
+  [events {:keys [heading]}]
   (let [{:keys [car name plate]} (first (of-type :car/registered events))
         fixed (set (mapcat :fixes (diary-entries events)))
         withdrawn (set (map :issue (of-type :issue/withdrawn events)))
@@ -157,7 +158,7 @@
     {:car (or car (some :car events))
      :issues issues
      :message (when (seq issues)
-                (apply str (str name (when plate (str " (" plate ")")) " — to fix:")
+                (apply str (str name (when plate (str " (" plate ")")) " — " (or heading "to fix:"))
                   (map-indexed (fn [i {:keys [text]}] (str "\n" (inc i) ". " text)) issues)))}))
 
 ;; ------------------------------------------------------------------ diary and costs
@@ -204,3 +205,83 @@
                                    other (- (reduce + (map (comp cents :cost) es)) parts labor)]
                                (into {} (for [[k c] [["parts" parts] ["labor" labor] ["other" other]] :when (pos? c)]
                                           [k (money c)])))}))}))
+
+;; ------------------------------------------------------------------ reminders
+
+(defn- reminded
+  "Due points already reminded: #{[car item level due_km due_at]}."
+  [events]
+  (set (for [e (of-type :reminder/sent events) :when (:item e)]
+         [(:car e) (:item e) (:level e) (:due_km e) (:due_at e)])))
+
+(defn reminders-to-send
+  "Automation todo list (D9): soon/overdue items not yet reminded at that level for their current due point, and cars
+  whose last reading is older than stale_days. `events` is the whole log (all cars and settings)."
+  [events {:keys [today]}]
+  (let [settings-events (filter #(= "settings" (namespace (:type %))) events)
+        s (settings settings-events nil)
+        sent (reminded events)
+        cars (distinct (keep :car events))]
+    {:today today
+     :todo (if-not (:enabled s)
+             []
+             (vec (mapcat
+                    (fn [car]
+                      (let [own (concat settings-events (filter #(= car (:car %)) events))
+                            {:keys [km_at]} (mileage own nil)
+                            items (:items (due-list own {:today today}))]
+                        (concat
+                          (for [{:keys [item status due_km due_at] :as it} items
+                                :when (#{"soon" "overdue"} status)
+                                :when (not (sent [car item status due_km due_at]))]
+                            (present (assoc (select-keys it [:item :title :due_km :due_at :remaining_km :predicted_at])
+                                       :car car :level status)))
+                          (when (and km_at (> (dates/days-between km_at today) (:stale_days s)))
+                            [{:car car :kind "odometer-stale" :last_at km_at}]))))
+                    cars)))}))
+
+;; ------------------------------------------------------------------ schedule templates
+
+(defn- lower [s] (str/lower-case (str s)))
+
+(defn template-match
+  "How well a catalogue template fits the car: nil when it does not apply, else a score (higher is better). An
+  add-on (LPG system) applies to any car with one of its fuels (D13)."
+  [{:keys [addon match]} {:keys [make model year engine fuels]}]
+  (let [{t-make :make t-models :models [from to] :years t-fuels :fuels t-engines :engines} match
+        fuel-ok (or (empty? t-fuels) (some (set t-fuels) fuels))]
+    (cond
+      addon (when fuel-ok 1)
+      (not= (lower t-make) (lower make)) nil
+      (and (seq t-models) (not-any? #(= (lower %) (lower model)) t-models)) nil
+      (and year from (< year from)) nil
+      (and year to (> year to)) nil
+      (not fuel-ok) nil
+      (and (seq t-engines) engine (some #(str/includes? (lower engine) (lower %)) t-engines)) 3
+      :else 2)))
+
+(defn in-language
+  "A text of the catalogue: {:en .. :uk ..} -> the one in `language`, English when missing."
+  [m language]
+  (if (map? m) (or (get m (keyword language)) (get m :en) (first (vals m))) m))
+
+(defn template-suggestions
+  "Catalogue templates that fit the car, best match first, add-ons last. `catalogue` is the app's template data
+  (D8), not events; titles in `language`."
+  [events {:keys [catalogue language]}]
+  (let [car (last (of-type :car/registered events))
+        language (or language "en")]
+    {:car (:car car)
+     :suggestions (->> catalogue
+                    (keep (fn [t] (when-let [score (template-match t car)] [score t])))
+                    (sort-by (fn [[score t]] [(if (:addon t) 1 0) (- score)]))
+                    (mapv (fn [[_ {:keys [template version title]}]]
+                            {:template template :version version :title (in-language title language)})))}))
+
+(defn template-items
+  "The items of a catalogue template in `language`, as the apply-template command carries them."
+  [{:keys [items]} language]
+  (mapv (fn [it] (present (assoc (select-keys it [:item :every_km :every_months :soon_km :soon_days])
+                            :title (in-language (:title it) language)
+                            :note (in-language (:note it) language))))
+    items))

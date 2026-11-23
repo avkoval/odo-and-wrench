@@ -7,8 +7,17 @@
   one. Events and commands are maps with keyword keys and a keyword :type (:car/registered); other values stay
   as in the model (strings, numbers). The model check (test/auto_maintenance/model_test.cljd) runs every scenario
   of every registered slice and lists the slices not implemented yet."
-  (:require [auto-maintenance.domain.decide :as d]
+  (:require ["dart:io" :as io]
+            [auto-maintenance.domain.decide :as d]
+            [auto-maintenance.domain.json :as json]
             [auto-maintenance.domain.views :as v]))
+
+(defn catalogue-from-disk
+  "The template catalogue (D8) as the app ships it: assets/templates/index.json lists the template files. The app
+  reads the same files from its assets; the model check reads them from the project folder."
+  []
+  (vec (for [file (json/read-str (.readAsStringSync (io/File "assets/templates/index.json")))]
+         (json/read-str (.readAsStringSync (io/File (str "assets/templates/" file)))))))
 
 (def registry
   {"register-car" {:decide d/handle}
@@ -31,4 +40,9 @@
    "settings" {:project v/settings}
    "choose-language" {:decide d/handle}
    "configure-reminders" {:decide d/handle}
-   "due-list" {:project v/due-list}})
+   "due-list" {:project v/due-list}
+   "template-suggestions" {:project (fn [events params]
+                                      (v/template-suggestions events (assoc params :catalogue (catalogue-from-disk))))}
+   "apply-schedule-template" {:decide d/handle}
+   "reminders-to-send" {:project v/reminders-to-send}
+   "send-reminder" {:decide d/handle}})

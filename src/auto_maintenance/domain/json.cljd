@@ -1,0 +1,27 @@
+(ns auto-maintenance.domain.json
+  "JSON text <-> Clojure data with keyword keys, for the template catalogue (D8) and the backup file (D7)."
+  (:require ["dart:convert" :as convert]))
+
+(defn ->clj
+  "Decoded JSON (Map / List / scalars) to Clojure data with keyword keys."
+  [x]
+  (cond
+    (dart/is? x Map) (into {}
+                       (map (fn [^MapEntry e] [(keyword (str (.-key e))) (->clj (.-value e))]))
+                       (.-entries ^Map x))
+    (dart/is? x List) (into [] (map ->clj) x)
+    :else x))
+
+(defn ->dart
+  "Clojure data to what jsonEncode takes (Clojure maps and vectors are Dart Maps and Lists): keyword keys and values
+  become strings (\"car/registered\")."
+  [x]
+  (cond
+    (map? x) (into {} (map (fn [[k v]] [(if (keyword? k) (subs (str k) 1) (str k)) (->dart v)])) x)
+    (or (sequential? x) (set? x)) (mapv ->dart x)
+    (keyword? x) (subs (str x) 1)
+    :else x))
+
+(defn read-str [text] (->clj (convert/jsonDecode text)))
+
+(defn write-str [x] (convert/jsonEncode (->dart x)))

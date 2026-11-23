@@ -1,0 +1,25 @@
+(ns auto-maintenance.domain.backup
+  "The backup format (D7): the event log as events.jsonl, one JSON object per line, in log order. An event's stream is
+  not stored: it follows from the event (the car, or \"settings\"). Pure; the zip with the photos is built by
+  auto-maintenance.backup."
+  (:require [clojure.string :as str]
+            [auto-maintenance.domain.json :as json]))
+
+(def format-version 1)
+
+(defn stream-of [event]
+  (if (= "settings" (namespace (:type event))) "settings" (:car event)))
+
+(defn events->jsonl [events]
+  (str/join "\n" (map json/write-str events)))
+
+(defn jsonl->events
+  "Events from events.jsonl; throws (ex-info .. {:category \"invalid\"}) on a line that is not an event."
+  [text]
+  (vec (for [[i line] (map-indexed vector (str/split-lines text))
+             :when (not (str/blank? line))]
+         (let [e (try (json/read-str line)
+                   (catch Object _ (throw (ex-info (str "line " (inc i) " is not JSON") {:category "invalid"}))))]
+           (when-not (and (map? e) (string? (:type e)) (str/includes? (:type e) "/"))
+             (throw (ex-info (str "line " (inc i) " is not an event") {:category "invalid"})))
+           (update e :type keyword)))))
