@@ -30,7 +30,9 @@ jobs:
         with: {flutter-version: '${{ env.FLUTTER_VERSION }}', channel: stable, cache: true}
       - uses: actions/cache@v4
         with:
-          path: [~/.m2/repository, ~/.gitlibs]
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
           key: clj-${{ hashFiles('deps.edn') }}
       - run: flutter pub get
       # a fresh checkout, so the test build cannot leak into an app build (20261122-build-workarounds-issue.org)
@@ -50,7 +52,9 @@ jobs:
         with: {flutter-version: '${{ env.FLUTTER_VERSION }}', channel: stable, cache: true}
       - uses: actions/cache@v4
         with:
-          path: [~/.m2/repository, ~/.gitlibs]
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
           key: clj-${{ hashFiles('deps.edn') }}
 
       - name: Version
