@@ -33,16 +33,21 @@ code implements exactly those slices:
 
 ## Install on a phone
 
-Download `app-release.apk` from the releases page (or build it, below), copy it to the phone and open it; Android
-asks once to allow installs from that app (Files, browser). Or with the phone on USB and USB debugging enabled:
+Download `odo-and-wrench-<version>.apk` from the [releases page](https://github.com/avkoval/odo-and-wrench/releases)
+(built by GitHub Actions from a version tag), open it on the phone; Android asks once to allow installs from that app
+(Files, browser). A newer APK installs over the old one and keeps the data. Or with the phone on USB and USB
+debugging enabled:
 
 ```
-adb install -r app-release.apk
+adb install -r odo-and-wrench-<version>.apk
 ```
+
+Every push to `main` also builds an APK, downloadable from the run's *Artifacts* on the
+[Actions page](https://github.com/avkoval/odo-and-wrench/actions).
 
 ## Build
 
-Requirements: Clojure CLI, JDK 21, [Babashka](https://babashka.org) (`bb`), Android SDK (platform 36), and Flutter
+Requirements: Clojure CLI, JDK 21, [Babashka](https://babashka.org) (`bb`), Android SDK (platform 37), and Flutter
 **3.47.9** in `~/sdk/flutter-3.47.9` — ClojureDart's compiler hangs with Flutter 3.50
 ([ClojureDart#389](https://github.com/tensegritics/ClojureDart/issues/389)); the `bb` tasks put the pinned Flutter
 first on `PATH`.

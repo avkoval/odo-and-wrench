@@ -107,5 +107,23 @@ case are in [20261122-repl-issue.org](../20261122-repl-issue.org); the rules for
 `bb release` builds the committed version from a clean clone of HEAD. The pinned Flutter SDK,
 R8 rules for ML Kit, and release lint settings are documented in
 [20261122-build-workarounds-issue.org](../20261122-build-workarounds-issue.org).
-The release APK is signed with the debug key (fine for installing on your own phone; a real signing key is needed for
-Google Play).
+Signing: release builds use the release key when `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` are set ([android/app/build.gradle.kts](../android/app/build.gradle.kts)),
+otherwise the debug key. `bb` reads them from `~/.android/odo-and-wrench-release.properties` (KEY=VALUE lines, never
+in the repo), so local and CI builds carry the same signature and install over each other. Android refuses to install
+an APK signed with another key over the app; switching keys means backup → uninstall → install → restore.
+
+## CI
+
+[.github/workflows/android.yml](../.github/workflows/android.yml) (GitHub Actions, pinned Flutter 3.47.9):
+
+- **test** — `clojure -M:test:cljd test` in a fresh checkout (model check + unit tests).
+- **apk** — `clojure -M:cljd compile`, `flutter build apk --release`; the APK is a run artifact. Version name from the
+  tag (`v0.3.0` → `0.3.0`) or `<pubspec version>-ci.<run>`; version code = minutes since 1970 (also in `bb release`),
+  so a newer build, local or CI, always installs over an older one.
+- **release** — on a tag `v*` the APK is attached to a GitHub Release:
+  `git tag v0.3.0 && git push origin v0.3.0`.
+
+Secrets (repository settings → Secrets → Actions): `ANDROID_KEYSTORE_BASE64` (the keystore, `base64 -w0`),
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Without them (forks, pull requests from
+forks) the APK is signed with the runner's throwaway debug key.

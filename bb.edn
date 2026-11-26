@@ -10,8 +10,17 @@
     (def flutter-bin (str home "/sdk/flutter-3.47.9/bin"))
     (def android-home (str home "/Android/Sdk"))
     (def adb (str android-home "/platform-tools/adb")) ; full path: bb resolves programs on its own PATH
-    (def env {"PATH" (str flutter-bin ":" android-home "/platform-tools:" (System/getenv "PATH"))
-              "ANDROID_HOME" android-home})
+    ;; Release signing key (outside the repo; the same key is in the GitHub secrets for CI): KEY=VALUE lines
+    ;; ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD. Without the file,
+    ;; release builds are signed with the debug key.
+    (def signing-env
+      (let [f (io/file home ".android/odo-and-wrench-release.properties")]
+        (if (.exists f)
+          (into {} (for [line (str/split-lines (slurp f)) :let [[k v] (str/split line (re-pattern "=") 2)] :when v] [k v]))
+          {})))
+    (def env (merge {"PATH" (str flutter-bin ":" android-home "/platform-tools:" (System/getenv "PATH"))
+                     "ANDROID_HOME" android-home}
+                    signing-env))
     (defn sh [& args] (apply shell {:extra-env env} args))
     (defn repl-port
       "Port of the live REPL of `bb dev`: REPL.lock holds \"<port> <pid>\"; nil when absent or its process is gone."
@@ -115,7 +124,9 @@
            :task (do (sh "rm -rf target/release")
                      (sh "git clone -q . target/release")
                      (shell {:extra-env env :dir "target/release"} "clojure -M:cljd compile")
-                     (shell {:extra-env env :dir "target/release"} "flutter build apk --release")
+                     (shell {:extra-env env :dir "target/release"}
+                       ;; version code = minutes since 1970, as in CI (.github/workflows/android.yml)
+                       (str "flutter build apk --release --build-number " (quot (System/currentTimeMillis) 60000)))
                      (println "APK: target/release/build/app/outputs/flutter-apk/app-release.apk"))}
 
   install-release {:doc "Build the release APK and install it on the connected phone (keeps the app's data)"
